@@ -1,0 +1,296 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user's personal profile and active store workspace reference.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user." },
+        "displayName": { "type": "string", "description": "Display name." },
+        "email": { "type": "string", "description": "Email address." },
+        "activeStoreId": { "type": "string", "description": "Store ID currently active for this user." },
+        "preferredLanguage": { "type": "string", "enum": ["ar", "en"], "description": "Preferred UI language." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": ["userId", "displayName", "activeStoreId", "preferredLanguage", "createdAt", "updatedAt"]
+    },
+    "Store": {
+      "title": "Store",
+      "description": "Root store workspace metadata.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "description": "UID of the technical owner (Admin)." },
+        "nameAr": { "type": "string", "description": "Store name in Arabic." },
+        "nameEn": { "type": "string", "description": "Store name in English." },
+        "memberUids": { "type": "array", "description": "Bounded list of authorized member UIDs." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "nameAr", "nameEn", "memberUids", "createdAt", "updatedAt"]
+    },
+    "StoreMember": {
+      "title": "StoreMember",
+      "description": "Store team member and RBAC role assignment.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "cashier"] },
+        "active": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "active", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Perfume, cream, or store product item with retail and wholesale pricing.",
+      "type": "object",
+      "properties": {
+        "nameAr": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "category": { "type": "string", "enum": ["perfume", "cream", "other"] },
+        "sku": { "type": "string" },
+        "barcode": { "type": "string" },
+        "imageUri": { "type": "string" },
+        "costPrice": { "type": "number" },
+        "retailPrice": { "type": "number" },
+        "wholesalePrice": { "type": "number" },
+        "wholesaleMinQty": { "type": "integer" },
+        "unitAr": { "type": "string" },
+        "unitEn": { "type": "string" },
+        "lowStockThreshold": { "type": "integer" },
+        "isDeleted": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nameAr", "nameEn", "category", "sku", "costPrice", "retailPrice", "wholesalePrice", "wholesaleMinQty", "unitAr", "unitEn", "lowStockThreshold", "isDeleted", "memberUids", "createdAt", "updatedAt"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Immutable stock movement ledger entry; stock levels are computed from movements.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "type": { "type": "string", "enum": ["opening", "receive", "sale", "return", "adjustment"] },
+        "qtyDelta": { "type": "integer" },
+        "unitCost": { "type": "number" },
+        "reason": { "type": "string" },
+        "refId": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "type", "qtyDelta", "unitCost", "reason", "actorUid", "actorName", "memberUids", "createdAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Retail or wholesale sales invoice.",
+      "type": "object",
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "saleType": { "type": "string", "enum": ["retail", "wholesale", "mixed"] },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "itemsSummary": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "costTotal": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "transfer", "credit"] },
+        "status": { "type": "string", "enum": ["completed", "returned"] },
+        "businessDayId": { "type": "string" },
+        "cashierUid": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["invoiceNumber", "saleType", "itemsSummary", "subtotal", "discount", "total", "costTotal", "paymentMethod", "status", "businessDayId", "cashierUid", "cashierName", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer account with credit balance.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "balance": { "type": "number" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "balance", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Supplier account with payable balance.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "balance": { "type": "number" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "balance", "memberUids", "createdAt", "updatedAt"]
+    },
+    "BusinessDay": {
+      "title": "BusinessDay",
+      "description": "Daily open/close register state and closing summary.",
+      "type": "object",
+      "properties": {
+        "dateStr": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "openedByUid": { "type": "string" },
+        "openedByName": { "type": "string" },
+        "closedByUid": { "type": "string" },
+        "closedByName": { "type": "string" },
+        "openingCash": { "type": "number" },
+        "totalSales": { "type": "number" },
+        "cashSales": { "type": "number" },
+        "transferSales": { "type": "number" },
+        "creditSales": { "type": "number" },
+        "itemsSoldCount": { "type": "integer" },
+        "holidayOverride": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["dateStr", "status", "openedByUid", "openedByName", "openingCash", "totalSales", "cashSales", "transferSales", "creditSales", "itemsSoldCount", "holidayOverride", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Holiday": {
+      "title": "Holiday",
+      "description": "Configured store holiday date or weekly off-day.",
+      "type": "object",
+      "properties": {
+        "dateStr": { "type": "string" },
+        "titleAr": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "isWeeklyOffDay": { "type": "boolean" },
+        "dayOfWeek": { "type": "integer" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["titleAr", "titleEn", "isWeeklyOffDay", "dayOfWeek", "memberUids", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable audit log of sensitive store actions.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorName", "actorRole", "action", "targetType", "targetId", "details", "memberUids", "createdAt"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Admin-managed theme, branding, session timeout, and notification configuration.",
+      "type": "object",
+      "properties": {
+        "storeNameAr": { "type": "string" },
+        "storeNameEn": { "type": "string" },
+        "primaryColorHex": { "type": "string" },
+        "secondaryColorHex": { "type": "string" },
+        "logoUri": { "type": "string" },
+        "sessionTimeoutMinutes": { "type": "integer" },
+        "notifyLowStock": { "type": "boolean" },
+        "notifyDayNotClosed": { "type": "boolean" },
+        "notifyNewUser": { "type": "boolean" },
+        "notifySyncErrors": { "type": "boolean" },
+        "notifyNewVersion": { "type": "boolean" },
+        "notifyRoles": { "type": "array" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storeNameAr", "storeNameEn", "primaryColorHex", "secondaryColorHex", "sessionTimeoutMinutes", "notifyLowStock", "notifyDayNotClosed", "notifyNewUser", "notifySyncErrors", "notifyNewVersion", "notifyRoles", "memberUids", "createdAt", "updatedAt"]
+    },
+    "AppRelease": {
+      "title": "AppRelease",
+      "description": "Admin-published Android app update metadata.",
+      "type": "object",
+      "properties": {
+        "platform": { "type": "string", "enum": ["android", "windows"] },
+        "versionCode": { "type": "integer" },
+        "versionName": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "releaseNotesAr": { "type": "string" },
+        "releaseNotesEn": { "type": "string" },
+        "isMandatory": { "type": "boolean" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["platform", "versionCode", "versionName", "downloadUrl", "releaseNotesAr", "releaseNotesEn", "isMandatory", "memberUids", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private profile for the authenticated user."
+    },
+    "/stores/{storeId}": {
+      "schema": { "$ref": "#/entities/Store" },
+      "description": "Store root workspace."
+    },
+    "/stores/{storeId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/StoreMember" },
+      "description": "Store staff members and RBAC roles."
+    },
+    "/stores/{storeId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Perfume and cream catalog."
+    },
+    "/stores/{storeId}/movements/{movementId}": {
+      "schema": { "$ref": "#/entities/StockMovement" },
+      "description": "Append-only stock movements."
+    },
+    "/stores/{storeId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Retail and wholesale invoices."
+    },
+    "/stores/{storeId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customer balances."
+    },
+    "/stores/{storeId}/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/Supplier" },
+      "description": "Supplier payables."
+    },
+    "/stores/{storeId}/business_days/{dayId}": {
+      "schema": { "$ref": "#/entities/BusinessDay" },
+      "description": "Daily open/close business day records."
+    },
+    "/stores/{storeId}/holidays/{holidayId}": {
+      "schema": { "$ref": "#/entities/Holiday" },
+      "description": "Store holiday dates and weekly off-days."
+    },
+    "/stores/{storeId}/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable audit logs."
+    },
+    "/stores/{storeId}/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Admin store customization and notification preferences."
+    },
+    "/stores/{storeId}/app_releases/{releaseId}": {
+      "schema": { "$ref": "#/entities/AppRelease" },
+      "description": "Published update releases checked on app launch."
+    }
+  }
+}

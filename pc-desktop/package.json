@@ -1,0 +1,57 @@
+{
+  "name": "aroma-pos-pc",
+  "version": "1.0.0",
+  "description": "Aroma POS Desktop (Offline-First Store Suite for Windows & LAN/Cloud Sync with Android)",
+  "main": "src/electron/main.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "electron": "electron .",
+    "build:win": "electron-builder --win nsis",
+    "test": "node --test test/pc-store.test.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "firebase": "^11.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aistudio.aromapos.pc",
+    "productName": "Aroma POS",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "build/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "Aroma-POS-Setup-${version}.exe",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Aroma POS",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

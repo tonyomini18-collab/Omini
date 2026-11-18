@@ -1,0 +1,6 @@
+{
+  "name": "Aroma POS",
+  "description": "Offline-first perfume & cream wholesale/retail POS, inventory, day control, analytics, and multi-role store management app with Arabic RTL & English LTR support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
