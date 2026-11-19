@@ -216,7 +216,13 @@ function startPcServer({
         ".html": "text/html; charset=utf-8",
         ".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8",
-        ".json": "application/json; charset=utf-8"
+        ".json": "application/json; charset=utf-8",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon"
       };
       res.writeHead(200, { "Content-Type": mimeMap[ext] || "application/octet-stream" });
       fs.createReadStream(target).pipe(res);
