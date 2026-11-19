@@ -11,6 +11,7 @@ const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
 const ADMIN_UID = "admin_owner_1";
 const MANAGER_UID = "manager_user_2";
 const CASHIER_UID = "cashier_user_3";
+const SELLER_UID = "seller_user_4";
 const OUTSIDER_UID = "outsider_999";
 
 const [emulatorHost, emulatorPortStr] = (
@@ -26,7 +27,7 @@ async function seedStoreWithRoles() {
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     const ts = nowDate();
-    const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID];
+    const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID, SELLER_UID];
     await db.collection("stores").doc(ADMIN_UID).set({
       ownerUid: ADMIN_UID,
       nameAr: "دار العطور",
@@ -57,6 +58,15 @@ async function seedStoreWithRoles() {
       uid: CASHIER_UID,
       displayName: "Store Cashier",
       role: "cashier",
+      active: true,
+      memberUids: members,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await db.collection("stores").doc(ADMIN_UID).collection("members").doc(SELLER_UID).set({
+      uid: SELLER_UID,
+      displayName: "Store Seller",
+      role: "seller",
       active: true,
       memberUids: members,
       createdAt: ts,
@@ -165,48 +175,20 @@ test("Manager can create/update products and query with memberUids filter", asyn
   );
 });
 
-test("Cashier CANNOT create, edit, or delete products", async () => {
+test("Cashier can create/update products & adjustments, CANNOT delete products or sell", async () => {
   await seedStoreWithRoles();
-  const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID];
+  const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID, SELLER_UID];
   const cashier = testEnv.authenticatedContext(CASHIER_UID).firestore();
   const productsCol = cashier.collection("stores").doc(ADMIN_UID).collection("products");
 
-  await assertFails(productsCol.doc("prod_c1").set(validProductPayload(members)));
+  await assertSucceeds(productsCol.doc("prod_c1").set(validProductPayload(members)));
+  await assertSucceeds(productsCol.doc("prod_c1").update({ retailPrice: 275.0, updatedAt: nowDate() }));
+  await assertFails(productsCol.doc("prod_c1").delete());
 
-  // Seed a product as manager, then ensure cashier cannot update price or delete
-  const manager = testEnv.authenticatedContext(MANAGER_UID).firestore();
-  await assertSucceeds(
-    manager.collection("stores").doc(ADMIN_UID).collection("products").doc("prod_1").set(validProductPayload(members))
-  );
-
-  await assertFails(productsCol.doc("prod_1").update({ retailPrice: 1.0 }));
-  await assertFails(productsCol.doc("prod_1").delete());
-});
-
-test("Cashier can create sale movement & invoice, but CANNOT create adjustment movement", async () => {
-  await seedStoreWithRoles();
-  const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID];
-  const cashier = testEnv.authenticatedContext(CASHIER_UID).firestore();
   const ts = nowDate();
-
   await assertSucceeds(
-    cashier.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_sale_1").set({
-      productId: "prod_1",
-      type: "sale",
-      qtyDelta: -2,
-      unitCost: 120.0,
-      reason: "POS Sale",
-      refId: "inv_1",
-      actorUid: CASHIER_UID,
-      actorName: "Store Cashier",
-      memberUids: members,
-      createdAt: ts,
-    })
-  );
-
-  await assertFails(
     cashier.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_adj_1").set({
-      productId: "prod_1",
+      productId: "prod_c1",
       type: "adjustment",
       qtyDelta: -5,
       unitCost: 120.0,
@@ -217,10 +199,64 @@ test("Cashier can create sale movement & invoice, but CANNOT create adjustment m
       createdAt: ts,
     })
   );
+  await assertFails(
+    cashier.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_sale_c").set({
+      productId: "prod_c1",
+      type: "sale",
+      qtyDelta: -1,
+      unitCost: 120.0,
+      reason: "Unauthorized sale",
+      refId: "inv_c",
+      actorUid: CASHIER_UID,
+      actorName: "Store Cashier",
+      memberUids: members,
+      createdAt: ts,
+    })
+  );
+});
+
+test("Seller can create sale movement & invoice, CANNOT update products or create adjustments", async () => {
+  await seedStoreWithRoles();
+  const members = [ADMIN_UID, MANAGER_UID, CASHIER_UID, SELLER_UID];
+  const seller = testEnv.authenticatedContext(SELLER_UID).firestore();
+  const ts = nowDate();
+
+  await assertFails(
+    seller.collection("stores").doc(ADMIN_UID).collection("products").doc("prod_s1").set(validProductPayload(members))
+  );
+
+  await assertSucceeds(
+    seller.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_sale_1").set({
+      productId: "prod_1",
+      type: "sale",
+      qtyDelta: -2,
+      unitCost: 120.0,
+      reason: "POS Sale",
+      refId: "inv_1",
+      actorUid: SELLER_UID,
+      actorName: "Store Seller",
+      memberUids: members,
+      createdAt: ts,
+    })
+  );
+
+  await assertFails(
+    seller.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_adj_1").set({
+      productId: "prod_1",
+      type: "adjustment",
+      qtyDelta: -5,
+      unitCost: 120.0,
+      reason: "Damaged",
+      actorUid: SELLER_UID,
+      actorName: "Store Seller",
+      memberUids: members,
+      createdAt: ts,
+    })
+  );
 
   // Movements are append-only (cannot update or delete)
   await assertFails(
-    cashier.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_sale_1").delete()
+    seller.collection("stores").doc(ADMIN_UID).collection("movements").doc("mov_sale_1").delete()
   );
 });
 

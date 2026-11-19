@@ -352,6 +352,29 @@ class SyncEngine(
     private suspend fun executeSyncOp(storeId: String, op: PendingSyncOpEntity, memberUids: List<String>): Result<Unit> {
         val json = JSONObject(op.payloadJson)
         return when (op.collectionName) {
+            "products" -> {
+                remote.upsertProduct(
+                    storeId,
+                    com.example.data.remote.FsProduct(
+                        id = op.documentId,
+                        nameAr = json.getString("nameAr"),
+                        nameEn = json.getString("nameEn"),
+                        category = json.optString("category", "perfume"),
+                        sku = json.getString("sku"),
+                        barcode = json.optString("barcode").takeIf { it.isNotBlank() },
+                        imageUri = json.optString("imageUri").takeIf { it.isNotBlank() },
+                        costPrice = json.optDouble("costPrice", 0.0),
+                        retailPrice = json.optDouble("retailPrice", 0.0),
+                        wholesalePrice = json.optDouble("wholesalePrice", 0.0),
+                        wholesaleMinQty = json.optInt("wholesaleMinQty", 1),
+                        unitAr = json.optString("unitAr", "قطعة"),
+                        unitEn = json.optString("unitEn", "Unit"),
+                        lowStockThreshold = json.optInt("lowStockThreshold", 5),
+                        isDeleted = json.optBoolean("isDeleted", false)
+                    ),
+                    memberUids
+                ).map { }
+            }
             "movements" -> {
                 remote.createMovement(
                     storeId,

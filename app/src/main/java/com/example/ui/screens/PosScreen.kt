@@ -96,6 +96,27 @@ fun PosScreen(
     val context = LocalContext.current
     val isRtl = state.language == AppLanguage.AR
 
+    if (!state.effectiveRole.canSell()) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+            Spacer(Modifier.height(12.dp))
+            Text(
+                strings.cashierNoSaleMsg,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = { viewModel.selectTab(MainTab.INVENTORY) }) {
+                Text(strings.navInventory)
+            }
+        }
+        return
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("all") }
     var showScanner by remember { mutableStateOf(false) }

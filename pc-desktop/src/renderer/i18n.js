@@ -1,6 +1,6 @@
 window.AROMA_I18N = {
   ar: {
-    appTitle: "أروما POS — نسخة الكمبيوتر",
+    appTitle: "Omini POS — نسخة الكمبيوتر",
     loginTitle: "تسجيل الدخول — إدارة متجر العطور والكريمات",
     loginSubtitle: "تعمل نسخة الكمبيوتر بدون إنترنت وتتزامن مباشرة مع تطبيق الأندرويد عبر الشبكة المحلية",
     username: "اسم المستخدم",
@@ -68,10 +68,25 @@ window.AROMA_I18N = {
     retailPrice: "سعر التجزئة",
     wholesalePrice: "سعر الجملة",
     minWholesaleQty: "أقل كمية جملة",
-    currency: "ر.س"
+    currency: "ر.س",
+    roleAdmin: "المسؤول (Admin)",
+    roleManager: "المدير العام",
+    roleCashier: "كاشير (تحديث المنتجات)",
+    roleSeller: "بائع (نقطة البيع فقط)",
+    displayName: "الاسم المعروض",
+    editUser: "تعديل / كلمة المرور",
+    newPassHint: "اتركه فارغاً للإبقاء على كلمة المرور الحالية",
+    activeUser: "حساب نشط",
+    savedMsg: "تم الحفظ بنجاح",
+    deletedMsg: "تم حذف المستخدم بنجاح",
+    notAllowed: "غير مسموح",
+    confirmDeleteUser: "هل أنت متأكد من حذف هذا المستخدم؟",
+    cashierNoSale: "صلاحية الكاشير لتحديث المنتجات والمخزون ولا تشمل البيع",
+    sellerNoEdit: "صلاحية البائع للبيع فقط ولا يمكنه تعديل المنتجات",
+    cancel: "إلغاء"
   },
   en: {
-    appTitle: "Aroma POS — Desktop Suite",
+    appTitle: "Omini POS — Desktop Suite",
     loginTitle: "Sign In — Perfume & Cream Store",
     loginSubtitle: "Offline-first desktop POS with direct Wi-Fi LAN & Cloud sync to the Android app",
     username: "Username",
@@ -139,6 +154,21 @@ window.AROMA_I18N = {
     retailPrice: "Retail Price",
     wholesalePrice: "Wholesale Price",
     minWholesaleQty: "Min Wholesale Qty",
-    currency: "SAR"
+    currency: "SAR",
+    roleAdmin: "Admin",
+    roleManager: "General Manager",
+    roleCashier: "Cashier (Update Products)",
+    roleSeller: "Seller (POS Sales Only)",
+    displayName: "Display Name",
+    editUser: "Edit / Password",
+    newPassHint: "Leave blank to keep current password",
+    activeUser: "Active",
+    savedMsg: "Saved successfully",
+    deletedMsg: "User deleted successfully",
+    notAllowed: "Not allowed",
+    confirmDeleteUser: "Delete this user?",
+    cashierNoSale: "Cashier role is limited to updating products & stock (cannot sell)",
+    sellerNoEdit: "Seller role is limited to sales only (cannot update products)",
+    cancel: "Cancel"
   }
 };

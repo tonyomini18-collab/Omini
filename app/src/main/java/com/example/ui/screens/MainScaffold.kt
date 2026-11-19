@@ -127,15 +127,25 @@ fun MainScaffold(
         }
     }
 
+    val defaultTab = if (role.canSell()) MainTab.POS else MainTab.INVENTORY
+
+    LaunchedEffect(role) {
+        if (state.activeTab == MainTab.POS && !role.canSell()) {
+            viewModel.selectTab(MainTab.INVENTORY)
+        }
+    }
+
     if (showNotificationsDialog) {
         BackHandler { showNotificationsDialog = false }
-    } else if (state.activeTab != MainTab.POS && !state.sessionLocked) {
-        BackHandler { viewModel.selectTab(MainTab.POS) }
+    } else if (state.activeTab != defaultTab && !state.sessionLocked) {
+        BackHandler { viewModel.selectTab(defaultTab) }
     }
 
     val destinations = remember(role, strings) {
         buildList {
-            add(NavDestination(MainTab.POS, strings.navPos, Icons.Filled.PointOfSale))
+            if (role.canSell()) {
+                add(NavDestination(MainTab.POS, strings.navPos, Icons.Filled.PointOfSale))
+            }
             add(NavDestination(MainTab.INVENTORY, strings.navInventory, Icons.Filled.Inventory2))
             add(NavDestination(MainTab.DAY_CONTROL, strings.navDayControl, Icons.Filled.CalendarMonth))
             add(NavDestination(MainTab.DASHBOARD, strings.navDashboard, Icons.Filled.Dashboard))
@@ -152,6 +162,7 @@ fun MainScaffold(
         UserRole.ADMIN -> strings.roleAdmin
         UserRole.MANAGER -> strings.roleManager
         UserRole.CASHIER -> strings.roleCashier
+        UserRole.SELLER -> strings.roleSeller
     }
     val storeTitle = if (isRtl) state.settings.storeNameAr else state.settings.storeNameEn
 

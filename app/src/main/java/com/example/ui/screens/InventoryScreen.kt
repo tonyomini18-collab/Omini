@@ -86,8 +86,19 @@ fun InventoryScreen(
     val strings = LocalStoreStrings.current
     val isRtl = state.language == AppLanguage.AR
     val role = state.effectiveRole
+    val canUpdateProducts = role.canUpdateProducts()
+    val canDelete = role.canDeleteCatalog()
 
+    val availableTabs = remember(canUpdateProducts, strings) {
+        buildList {
+            add("catalog" to strings.tabCatalog)
+            if (canUpdateProducts) add("receive" to strings.tabReceive)
+            add("movements" to strings.tabMovements)
+            add("parties" to strings.tabParties)
+        }
+    }
     var selectedTab by remember { mutableIntStateOf(0) }
+    if (selectedTab >= availableTabs.size) selectedTab = 0
     var editingProduct by remember { mutableStateOf<ProductEntity?>(null) }
     var showProductDialog by remember { mutableStateOf(false) }
     var deletingProduct by remember { mutableStateOf<ProductEntity?>(null) }
@@ -95,7 +106,7 @@ fun InventoryScreen(
 
     Scaffold(
         floatingActionButton = {
-            if (selectedTab == 0 && role.canManageCatalog()) {
+            if (availableTabs[selectedTab].first == "catalog" && canUpdateProducts) {
                 FloatingActionButton(
                     onClick = {
                         editingProduct = null
@@ -110,26 +121,27 @@ fun InventoryScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             TabRow(selectedTabIndex = selectedTab) {
-                Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text(strings.tabCatalog, maxLines = 1) })
-                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text(strings.tabReceive, maxLines = 1) })
-                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text(strings.tabMovements, maxLines = 1) })
-                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text(strings.tabParties, maxLines = 1) })
+                availableTabs.forEachIndexed { idx, (_, title) ->
+                    Tab(selected = selectedTab == idx, onClick = { selectedTab = idx }, text = { Text(title, maxLines = 1) })
+                }
             }
 
-            if (selectedTab == 0 && role.canManageCatalog() && !state.isOnline) {
-                Surface(color = WarningAmber.copy(alpha = 0.16f), modifier = Modifier.fillMaxWidth()) {
+            if (availableTabs[selectedTab].first == "catalog" && !canUpdateProducts) {
+                Surface(color = WarningAmber.copy(alpha = 0.14f), modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        strings.onlineRequiredCatalog,
+                        strings.sellerNoEditProductsMsg,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
             }
 
-            when (selectedTab) {
-                0 -> CatalogTab(
+            when (availableTabs[selectedTab].first) {
+                "catalog" -> CatalogTab(
                     state = state,
                     isRtl = isRtl,
+                    canEditProducts = canUpdateProducts,
+                    canDeleteProducts = canDelete,
                     onEdit = { p ->
                         editingProduct = p
                         showProductDialog = true
@@ -137,9 +149,9 @@ fun InventoryScreen(
                     onDelete = { p -> deletingProduct = p },
                     onAdjust = { pw -> adjustingProduct = pw }
                 )
-                1 -> ReceiveStockTab(state = state, viewModel = viewModel, isRtl = isRtl)
-                2 -> MovementsTab(state = state, isRtl = isRtl)
-                3 -> PartiesTab(state = state, viewModel = viewModel)
+                "receive" -> ReceiveStockTab(state = state, viewModel = viewModel, isRtl = isRtl)
+                "movements" -> MovementsTab(state = state, isRtl = isRtl)
+                "parties" -> PartiesTab(state = state, viewModel = viewModel)
             }
         }
     }
@@ -147,7 +159,6 @@ fun InventoryScreen(
     if (showProductDialog) {
         ProductEditorDialog(
             initial = editingProduct,
-            isOnline = state.isOnline,
             onDismiss = { showProductDialog = false },
             onSave = { product, initialStock ->
                 viewModel.saveProduct(product, initialStock)
@@ -223,6 +234,8 @@ fun InventoryScreen(
 private fun CatalogTab(
     state: StoreUiState,
     isRtl: Boolean,
+    canEditProducts: Boolean,
+    canDeleteProducts: Boolean,
     onEdit: (ProductEntity) -> Unit,
     onDelete: (ProductEntity) -> Unit,
     onAdjust: (ProductWithStock) -> Unit
@@ -283,16 +296,18 @@ private fun CatalogTab(
                             containerColor = badgeColor.copy(alpha = 0.15f),
                             contentColor = badgeColor
                         )
-                        if (role.canManageCatalog()) {
+                        if (canEditProducts) {
                             Row {
                                 IconButton(onClick = { onAdjust(pw) }) {
                                     Icon(Icons.Filled.Tune, contentDescription = strings.manualAdjustment)
                                 }
-                                IconButton(onClick = { onEdit(p) }, enabled = state.isOnline) {
+                                IconButton(onClick = { onEdit(p) }) {
                                     Icon(Icons.Filled.Edit, contentDescription = strings.editProduct)
                                 }
-                                IconButton(onClick = { onDelete(p) }, enabled = state.isOnline) {
-                                    Icon(Icons.Filled.Delete, contentDescription = strings.deleteProduct, tint = DangerCrimson)
+                                if (canDeleteProducts) {
+                                    IconButton(onClick = { onDelete(p) }) {
+                                        Icon(Icons.Filled.Delete, contentDescription = strings.deleteProduct, tint = DangerCrimson)
+                                    }
                                 }
                             }
                         }
@@ -573,7 +588,6 @@ private fun PartyRowCard(
 @Composable
 private fun ProductEditorDialog(
     initial: ProductEntity?,
-    isOnline: Boolean,
     onDismiss: () -> Unit,
     onSave: (ProductEntity, Int) -> Unit
 ) {
@@ -669,7 +683,7 @@ private fun ProductEditorDialog(
                     )
                     onSave(entity, initialStockStr.toIntOrNull() ?: 0)
                 },
-                enabled = isOnline && (nameAr.isNotBlank() || nameEn.isNotBlank())
+                enabled = nameAr.isNotBlank() || nameEn.isNotBlank()
             ) {
                 Text(strings.saveLabel)
             }

@@ -11,23 +11,198 @@ function tmpStoreFile() {
   return path.join(dir, "store.json");
 }
 
-test("authenticates admin omini/admin116 and enforces cashier RBAC", () => {
+test("authenticates admin, manager, cashier, seller, supports password updates, and enforces RBAC", () => {
   const engine = new PcStoreEngine(tmpStoreFile());
   assert.equal(engine.authenticateLocal("omini", "wrong"), null);
   const admin = engine.authenticateLocal("omini", "admin116");
   assert.ok(admin);
   assert.equal(admin.role, "admin");
 
-  const cashier = engine.upsertStaffCredential("admin", {
+  const manager = engine.upsertStaffCredential("admin", {
+    username: "mgr1",
+    password: "mypassword",
+    displayName: "General Manager",
+    role: "manager"
+  });
+  const mgrAuth = engine.authenticateLocal("mgr1", "mypassword");
+  assert.ok(mgrAuth);
+  assert.equal(mgrAuth.role, "manager");
+
+  // Manager can create Cashier and Seller, and change their passwords, but cannot create/modify Admin
+  const cashier = engine.upsertStaffCredential("manager", {
     username: "cash1",
     password: "secret",
     displayName: "Cashier 1",
     role: "cashier"
   });
+  const seller = engine.upsertStaffCredential("manager", {
+    username: "sell1",
+    password: "sellpass",
+    displayName: "Seller 1",
+    role: "seller"
+  });
+
+  assert.ok(engine.authenticateLocal("cash1", "secret"));
+  assert.ok(engine.authenticateLocal("sell1", "sellpass"));
 
   assert.throws(() => {
-    engine.saveProduct(cashier, { nameAr: "تست", nameEn: "Test", retailPrice: 100 });
-  }, /Admin or General Manager/);
+    engine.upsertStaffCredential("manager", {
+      username: "rogueadmin",
+      password: "123",
+      role: "admin"
+    });
+  }, /^Error: Not allowed$/);
+
+  assert.throws(() => {
+    engine.upsertStaffCredential("manager", {
+      uid: "local_admin_omini",
+      username: "omini",
+      password: "hacked",
+      role: "admin"
+    });
+  }, /^Error: Not allowed$/);
+
+  assert.throws(() => {
+    engine.upsertStaffCredential("manager", {
+      uid: "local_admin_omini",
+      username: "omini",
+      displayName: "Disabled Admin",
+      role: "seller",
+      active: false
+    });
+  }, /^Error: Not allowed$/);
+
+  assert.throws(() => {
+    engine.deleteStaffCredential("manager", "local_admin_omini");
+  }, /^Error: Not allowed$/);
+
+  // Cashier & Seller cannot create/edit/delete users
+  assert.throws(() => {
+    engine.upsertStaffCredential("cashier", { username: "u2", password: "123", role: "seller" });
+  }, /^Error: Not allowed$/);
+  assert.throws(() => {
+    engine.upsertStaffCredential("seller", { username: "u3", password: "123", role: "seller" });
+  }, /^Error: Not allowed$/);
+  assert.throws(() => {
+    engine.deleteStaffCredential("cashier", seller.uid);
+  }, /^Error: Not allowed$/);
+  assert.throws(() => {
+    engine.deleteStaffCredential("seller", cashier.uid);
+  }, /^Error: Not allowed$/);
+
+  // Last remaining admin cannot be deleted, demoted, or deactivated
+  assert.throws(() => {
+    engine.deleteStaffCredential("admin", "local_admin_omini");
+  }, /last remaining admin/);
+  assert.throws(() => {
+    engine.upsertStaffCredential("admin", {
+      uid: "local_admin_omini",
+      username: "omini",
+      displayName: "omini",
+      role: "manager",
+      active: true
+    });
+  }, /last remaining admin/);
+  assert.throws(() => {
+    engine.upsertStaffCredential("admin", {
+      uid: "local_admin_omini",
+      username: "omini",
+      displayName: "omini",
+      role: "admin",
+      active: false
+    });
+  }, /last remaining admin/);
+
+  // Only admin can create a second admin; once 2 active admins exist, one can be demoted or deleted, leaving the last one protected
+  const secondAdmin = engine.upsertStaffCredential("admin", {
+    username: "admin2",
+    password: "pass2",
+    displayName: "Second Admin",
+    role: "admin"
+  });
+  assert.ok(engine.authenticateLocal("admin2", "pass2"));
+  engine.upsertStaffCredential("admin", {
+    uid: secondAdmin.uid,
+    username: "admin2",
+    displayName: "Second Admin",
+    role: "manager"
+  });
+  assert.equal(engine.authenticateLocal("admin2", "pass2").role, "manager");
+  // Now local_admin_omini is again the sole active admin and stays protected
+  assert.throws(() => {
+    engine.deleteStaffCredential("admin", "local_admin_omini");
+  }, /last remaining admin/);
+
+  // Manager can delete non-admin users (cashier/seller)
+  const tempSeller = engine.upsertStaffCredential("manager", {
+    username: "temp_sell",
+    password: "tp",
+    displayName: "Temp Seller",
+    role: "seller"
+  });
+  assert.ok(engine.authenticateLocal("temp_sell", "tp"));
+  const delRes = engine.deleteStaffCredential("manager", tempSeller.uid);
+  assert.equal(delRes.deleted, true);
+  assert.equal(engine.authenticateLocal("temp_sell", "tp"), null);
+
+  // Password change works and invalidates old password
+  engine.upsertStaffCredential("manager", {
+    uid: seller.uid,
+    username: "sell1",
+    password: "newpassword99",
+    displayName: "Seller Updated",
+    role: "seller"
+  });
+  assert.equal(engine.authenticateLocal("sell1", "sellpass"), null);
+  assert.equal(engine.authenticateLocal("sell1", "newpassword99").displayName, "Seller Updated");
+
+  // Cashier can update products & stock, CANNOT complete sales or delete products
+  const updatedProd = engine.saveProduct(cashier, { nameAr: "تست", nameEn: "Test Cream", retailPrice: 100 });
+  assert.equal(updatedProd.retailPrice, 100);
+  engine.openBusinessDay(admin, { openingCash: 50 });
+  assert.throws(() => {
+    engine.completeSale(cashier, { items: [{ productId: "seed_oud_royal", qty: 1, wholesale: false }] });
+  }, /Cashier cannot complete sales/);
+  assert.throws(() => {
+    engine.deleteProduct(cashier, updatedProd.id);
+  }, /Permission denied/);
+
+  // Seller can complete sales, CANNOT update products or receive stock
+  assert.throws(() => {
+    engine.saveProduct(seller, { nameAr: "منع", nameEn: "Blocked", retailPrice: 50 });
+  }, /Seller cannot update products/);
+  assert.throws(() => {
+    engine.receiveStock(seller, { productId: "seed_oud_royal", qty: 5, unitCost: 140 });
+  }, /Seller cannot receive stock/);
+
+  const saleInv = engine.completeSale(seller, {
+    items: [{ productId: "seed_oud_royal", qty: 2, wholesale: false }],
+    paymentMethod: "cash"
+  });
+  assert.equal(saleInv.cashierUid, seller.uid);
+});
+
+test("LAN snapshot member sync enables immediate PC login for Android-created users", () => {
+  const { sha256 } = require("../src/core/store-engine");
+  const engine = new PcStoreEngine(tmpStoreFile());
+  engine.mergeSnapshot({
+    members: [
+      {
+        uid: "staff_android_1",
+        username: "sara",
+        passwordHash: sha256("sara2026"),
+        displayName: "Sara Seller",
+        role: "seller",
+        active: true,
+        createdAtMillis: Date.now(),
+        updatedAtMillis: Date.now()
+      }
+    ]
+  });
+  const loggedIn = engine.authenticateLocal("sara", "sara2026");
+  assert.ok(loggedIn);
+  assert.equal(loggedIn.role, "seller");
+  assert.equal(loggedIn.displayName, "Sara Seller");
 });
 
 test("offline POS sale, return, and movement-ledger stock calculation", () => {

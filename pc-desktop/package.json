@@ -1,12 +1,13 @@
 {
-  "name": "aroma-pos-pc",
+  "name": "omini-pos-pc",
   "version": "1.0.0",
-  "description": "Aroma POS Desktop (Offline-First Store Suite for Windows & LAN/Cloud Sync with Android)",
+  "description": "Omini POS Desktop (Offline-First Store Suite for Windows & LAN/Cloud Sync with Android)",
   "main": "src/electron/main.js",
   "scripts": {
     "start": "node src/server.js",
     "electron": "electron .",
     "build:win": "electron-builder --win nsis",
+    "prepare:download-folder": "node scripts/build-download-folder.js",
     "test": "node --test test/pc-store.test.js"
   },
   "dependencies": {
@@ -18,20 +19,20 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.aistudio.aromapos.pc",
-    "productName": "Aroma POS",
+    "appId": "com.aistudio.ominipos.pc",
+    "productName": "Omini POS",
     "directories": {
-      "buildResources": "build",
+      "buildResources": "assets",
       "output": "dist"
     },
     "files": [
       "package.json",
       "src/**/*",
-      "build/**/*"
+      "assets/**/*"
     ],
     "win": {
-      "icon": "build/icon.ico",
-      "artifactName": "Aroma-POS-Setup-${version}.exe",
+      "icon": "assets/icon.ico",
+      "artifactName": "Omini-POS-Setup-${version}.exe",
       "target": [
         {
           "target": "nsis",
@@ -47,10 +48,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Aroma POS",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "Omini POS",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
       "deleteAppDataOnUninstall": false
     }
   }

@@ -68,7 +68,19 @@ service cloud.firestore {
 
     function isStoreMember(storeId) {
       return isStoreOwner(storeId) || (
-        isSignedIn() && memberDocExists(storeId) && memberActive(storeId) && memberRole(storeId) in ['admin', 'manager', 'cashier']
+        isSignedIn() && memberDocExists(storeId) && memberActive(storeId) && memberRole(storeId) in ['admin', 'manager', 'cashier', 'seller']
+      );
+    }
+
+    function isStoreProductEditor(storeId) {
+      return isStoreManagerOrAdmin(storeId) || (
+        isSignedIn() && memberDocExists(storeId) && memberActive(storeId) && memberRole(storeId) == 'cashier'
+      );
+    }
+
+    function isStoreSeller(storeId) {
+      return isStoreManagerOrAdmin(storeId) || (
+        isSignedIn() && memberDocExists(storeId) && memberActive(storeId) && memberRole(storeId) == 'seller'
       );
     }
 
@@ -95,7 +107,7 @@ service cloud.firestore {
     function isValidStoreMember(data, storeId, memberId) {
       return data.uid is string && data.uid == memberId &&
              data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
-             data.role in ['admin', 'manager', 'cashier'] &&
+             data.role in ['admin', 'manager', 'cashier', 'seller'] &&
              data.active is bool &&
              isValidMemberList(data.memberUids, storeId) &&
              isValidTimestamp(data.createdAt) &&
@@ -197,7 +209,7 @@ service cloud.firestore {
     function isValidAuditLog(data, storeId) {
       return data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
              data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 100 &&
-             data.actorRole in ['admin', 'manager', 'cashier'] &&
+             data.actorRole in ['admin', 'manager', 'cashier', 'seller'] &&
              data.action is string && data.action.size() >= 1 && data.action.size() <= 80 &&
              data.targetType is string && data.targetType.size() >= 1 && data.targetType.size() <= 60 &&
              data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
@@ -298,10 +310,16 @@ service cloud.firestore {
                          isValidStoreMember(incoming(), storeId, memberId) &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role', 'active', 'memberUids', 'updatedAt']) &&
                          (
-                           isStoreAdmin(storeId) ||
+                           (isStoreAdmin(storeId) && (memberId != storeId || (incoming().role == 'admin' && incoming().active == true))) ||
                            (isStoreManagerOrAdmin(storeId) && existing().role != 'admin' && incoming().role != 'admin')
                          );
-        allow delete: if isSignedIn() && isValidId(memberId) && memberId != storeId && isStoreAdmin(storeId);
+        allow delete: if isSignedIn() &&
+                         isValidId(memberId) &&
+                         memberId != storeId &&
+                         (
+                           isStoreAdmin(storeId) ||
+                           (isStoreManagerOrAdmin(storeId) && existing().role != 'admin')
+                         );
       }
 
       match /products/{productId} {
@@ -312,13 +330,13 @@ service cloud.firestore {
                          incoming().keys().hasAll(['nameAr', 'nameEn', 'category', 'sku', 'costPrice', 'retailPrice', 'wholesalePrice', 'wholesaleMinQty', 'unitAr', 'unitEn', 'lowStockThreshold', 'isDeleted', 'memberUids', 'createdAt', 'updatedAt']) &&
                          incoming().keys().hasOnly(['nameAr', 'nameEn', 'category', 'sku', 'barcode', 'imageUri', 'costPrice', 'retailPrice', 'wholesalePrice', 'wholesaleMinQty', 'unitAr', 'unitEn', 'lowStockThreshold', 'isDeleted', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidProduct(incoming(), storeId) &&
-                         isStoreManagerOrAdmin(storeId);
+                         isStoreProductEditor(storeId);
         allow update: if isSignedIn() &&
                          isValidId(productId) &&
                          incoming().createdAt == existing().createdAt &&
                          isValidProduct(incoming(), storeId) &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['nameAr', 'nameEn', 'category', 'sku', 'barcode', 'imageUri', 'costPrice', 'retailPrice', 'wholesalePrice', 'wholesaleMinQty', 'unitAr', 'unitEn', 'lowStockThreshold', 'isDeleted', 'memberUids', 'updatedAt']) &&
-                         isStoreManagerOrAdmin(storeId);
+                         isStoreProductEditor(storeId);
         allow delete: if isSignedIn() && isValidId(productId) && isStoreManagerOrAdmin(storeId);
       }
 
@@ -332,7 +350,11 @@ service cloud.firestore {
                          incoming().keys().hasOnly(['productId', 'type', 'qtyDelta', 'unitCost', 'reason', 'refId', 'actorUid', 'actorName', 'memberUids', 'createdAt']) &&
                          isValidStockMovement(incoming(), storeId) &&
                          isStoreMember(storeId) &&
-                         (incoming().type != 'adjustment' || isStoreManagerOrAdmin(storeId));
+                         (
+                           isStoreManagerOrAdmin(storeId) ||
+                           (incoming().type in ['opening', 'receive', 'adjustment'] && isStoreProductEditor(storeId)) ||
+                           (incoming().type in ['sale', 'return'] && isStoreSeller(storeId))
+                         );
         allow update, delete: if false;
       }
 
@@ -345,7 +367,7 @@ service cloud.firestore {
                          incoming().keys().hasAll(['invoiceNumber', 'saleType', 'itemsSummary', 'subtotal', 'discount', 'total', 'costTotal', 'paymentMethod', 'status', 'businessDayId', 'cashierUid', 'cashierName', 'memberUids', 'createdAt', 'updatedAt']) &&
                          incoming().keys().hasOnly(['invoiceNumber', 'saleType', 'customerId', 'customerName', 'itemsSummary', 'subtotal', 'discount', 'total', 'costTotal', 'paymentMethod', 'status', 'businessDayId', 'cashierUid', 'cashierName', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidInvoice(incoming(), storeId) &&
-                         isStoreMember(storeId);
+                         isStoreSeller(storeId);
         allow update: if isSignedIn() &&
                          isValidId(invoiceId) &&
                          incoming().cashierUid == existing().cashierUid &&
@@ -353,7 +375,7 @@ service cloud.firestore {
                          isValidInvoice(incoming(), storeId) &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
                          (existing().status != 'returned' || isStoreAdmin(storeId)) &&
-                         isStoreMember(storeId);
+                         isStoreSeller(storeId);
         allow delete: if false;
       }
 

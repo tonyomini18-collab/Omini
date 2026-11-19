@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omini POS Desktop</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="loginView" class="login-shell">
+    <form id="loginForm" class="login-card">
+      <div class="between">
+        <strong id="brandTitle">Omini POS</strong>
+        <div class="row">
+          <button type="button" id="loginLangBtn" class="btn">English</button>
+          <button type="button" id="loginThemeBtn" class="btn">☾</button>
+        </div>
+      </div>
+      <h2 id="loginTitle" style="margin:4px 0"></h2>
+      <p id="loginSubtitle" style="margin:0;color:var(--muted);font-size:13px"></p>
+      <label>
+        <span id="userLabel"></span>
+        <input id="loginUsername" required autocomplete="username" />
+      </label>
+      <label>
+        <span id="passLabel"></span>
+        <input id="loginPassword" type="password" required autocomplete="current-password" />
+      </label>
+      <div id="loginError" class="error-text hidden"></div>
+      <button type="submit" id="loginSubmitBtn" class="btn btn-primary"></button>
+    </form>
+  </div>
+
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar" id="sidebarNav"></aside>
+    <div class="main-area">
+      <header class="topbar">
+        <div class="row">
+          <strong id="storeHeaderName">Aroma Boutique</strong>
+          <span id="userRoleBadge" class="badge" style="background:var(--surface-alt)"></span>
+        </div>
+        <div class="row">
+          <span id="networkBadge" class="badge badge-offline"></span>
+          <span id="lanIpChip" class="badge mono" style="background:var(--surface-alt)"></span>
+          <button id="appLangBtn" class="btn"></button>
+          <button id="appThemeBtn" class="btn">☾</button>
+          <button id="signOutBtn" class="btn btn-danger"></button>
+        </div>
+      </header>
+      <main id="mainContent" class="content"></main>
+    </div>
+  </div>
+
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

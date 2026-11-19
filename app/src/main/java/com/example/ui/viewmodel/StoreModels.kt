@@ -15,10 +15,14 @@ import com.example.i18n.AppLanguage
 enum class UserRole(val key: String) {
     ADMIN("admin"),
     MANAGER("manager"),
-    CASHIER("cashier");
+    CASHIER("cashier"),
+    SELLER("seller");
 
-    fun canManageCatalog(): Boolean = this == ADMIN || this == MANAGER
-    fun canAdjustStock(): Boolean = this == ADMIN || this == MANAGER
+    fun canSell(): Boolean = this == ADMIN || this == MANAGER || this == SELLER
+    fun canUpdateProducts(): Boolean = this == ADMIN || this == MANAGER || this == CASHIER
+    fun canManageCatalog(): Boolean = canUpdateProducts()
+    fun canDeleteCatalog(): Boolean = this == ADMIN || this == MANAGER
+    fun canAdjustStock(): Boolean = this == ADMIN || this == MANAGER || this == CASHIER
     fun canViewProfitAndReports(): Boolean = this == ADMIN || this == MANAGER
     fun canOverrideHoliday(): Boolean = this == ADMIN || this == MANAGER
     fun canManageUsers(): Boolean = this == ADMIN || this == MANAGER
@@ -28,7 +32,9 @@ enum class UserRole(val key: String) {
         fun fromKey(key: String?): UserRole = when (key?.lowercase()) {
             "admin" -> ADMIN
             "manager" -> MANAGER
-            else -> CASHIER
+            "cashier" -> CASHIER
+            "seller" -> SELLER
+            else -> SELLER
         }
     }
 }

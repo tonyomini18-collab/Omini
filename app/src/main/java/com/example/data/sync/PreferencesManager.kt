@@ -88,9 +88,49 @@ class PreferencesManager(private val context: Context) {
                 edit[keyLocalUid] = DEFAULT_ADMIN_UID
                 edit[keyLocalName] = expectedUser
                 edit[keyLocalRole] = "admin"
+                if (edit[keyActiveStoreId].isNullOrBlank()) {
+                    edit[keyActiveStoreId] = DEFAULT_ADMIN_UID
+                }
             }
         }
         return matches
+    }
+
+    suspend fun verifyAndSignInLocalUser(
+        dao: com.example.data.local.StoreDao,
+        username: String,
+        password: String
+    ): Boolean {
+        val cleanUser = username.trim()
+        if (cleanUser.isBlank() || password.isEmpty()) return false
+        val passHash = sha256(password)
+
+        val members = dao.getMembersSnapshot()
+        val memberMatch = members.firstOrNull { m ->
+            m.active &&
+                m.passwordHash.isNotBlank() &&
+                m.passwordHash.equals(passHash, ignoreCase = true) &&
+                (m.username.equals(cleanUser, ignoreCase = true) ||
+                    (m.username.isBlank() && (m.displayName.equals(cleanUser, ignoreCase = true) || m.uid.equals(cleanUser, ignoreCase = true))))
+        }
+        if (memberMatch != null) {
+            context.dataStore.edit { edit ->
+                edit[keyLocalUid] = memberMatch.uid
+                edit[keyLocalName] = memberMatch.displayName.ifBlank { cleanUser }
+                edit[keyLocalRole] = memberMatch.role
+                if (edit[keyActiveStoreId].isNullOrBlank()) {
+                    edit[keyActiveStoreId] = DEFAULT_ADMIN_UID
+                }
+            }
+            return true
+        }
+
+        // Only allow fallback default admin check if local_admin_omini does not already have an overridden passwordHash in store_members
+        val storedDefaultAdmin = members.firstOrNull { it.uid == DEFAULT_ADMIN_UID }
+        if (storedDefaultAdmin != null && storedDefaultAdmin.passwordHash.isNotBlank()) {
+            return false
+        }
+        return verifyAndSignInLocalAdmin(cleanUser, password)
     }
 
     suspend fun clearLocalSession() {

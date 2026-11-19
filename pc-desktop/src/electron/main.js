@@ -53,13 +53,13 @@ async function createWindow() {
   const dataPath = path.join(app.getPath("userData"), "aroma-pos-pc-store.json");
   pcServerHandle = await startPcServer({ dataFilePath: dataPath, port: 8787 });
 
-  const iconPath = path.join(__dirname, "../../build/icon.png");
+  const iconPath = path.join(__dirname, "../../assets/icon.png");
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
     minWidth: 960,
     minHeight: 640,
-    title: "Aroma POS Desktop",
+    title: "Omini POS Desktop",
     ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

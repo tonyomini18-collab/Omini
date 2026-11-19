@@ -10,6 +10,10 @@
   let searchQuery = "";
   let categoryFilter = "all";
   let periodFilter = "month";
+  let editingMember = null;
+  let editingProduct = null;
+  let adminNotice = "";
+  let adminNoticeError = false;
 
   const IDB_NAME = "aroma_pos_pc_idb";
   function saveSnapshotToIndexedDb(snapshot) {
@@ -86,12 +90,13 @@
   function renderNav() {
     const s = t();
     const role = currentUser.role;
-    const tabs = [
-      ["pos", s.navPos],
-      ["inventory", s.navInventory],
-      ["day", s.navDay],
-      ["dashboard", s.navDashboard]
-    ];
+    const tabs = [];
+    if (role !== "cashier") {
+      tabs.push(["pos", s.navPos]);
+    }
+    tabs.push(["inventory", s.navInventory]);
+    tabs.push(["day", s.navDay]);
+    tabs.push(["dashboard", s.navDashboard]);
     if (role === "admin" || role === "manager") {
       tabs.push(["reports", s.navReports]);
       tabs.push(["admin", s.navAdmin]);
@@ -123,6 +128,10 @@
 
   function renderPos(root) {
     const s = t();
+    if (currentUser.role === "cashier") {
+      root.innerHTML = `<div class="card" style="color:var(--danger)"><strong>${s.cashierNoSale}</strong></div>`;
+      return;
+    }
     const q = searchQuery.toLowerCase();
     const filtered = (state.products || []).filter((p) => {
       const catOk = categoryFilter === "all" || p.category === categoryFilter;
@@ -319,48 +328,49 @@
 
   function renderInventory(root) {
     const s = t();
-    const canManage = currentUser.role === "admin" || currentUser.role === "manager";
+    const canEditProducts = currentUser.role === "admin" || currentUser.role === "manager" || currentUser.role === "cashier";
+    const canDelete = currentUser.role === "admin" || currentUser.role === "manager";
     const suppliers = (state.parties || []).filter((p) => p.partyType === "supplier");
+    const ep = editingProduct;
     root.innerHTML = `
       <div class="stack">
+        ${!canEditProducts ? `<div class="card" style="border-color:var(--secondary);color:var(--secondary)"><strong>${s.sellerNoEdit}</strong></div>` : ""}
         ${
-          canManage
+          canEditProducts
             ? `
           <form id="prodForm" class="card stack">
-            <h3 style="margin:0">${s.addProduct}</h3>
+            <div class="between">
+              <h3 style="margin:0">${ep ? `${s.edit}: ${lang === "ar" ? ep.nameAr : ep.nameEn}` : s.addProduct}</h3>
+              ${ep ? `<button type="button" id="cancelEditProd" class="btn">${s.cancel}</button>` : ""}
+            </div>
             <div class="row">
-              <input id="pNameAr" placeholder="Name (AR)" required />
-              <input id="pNameEn" placeholder="Name (EN)" required />
+              <input id="pNameAr" placeholder="Name (AR)" value="${ep ? ep.nameAr.replace(/"/g, "&quot;") : ""}" required />
+              <input id="pNameEn" placeholder="Name (EN)" value="${ep ? ep.nameEn.replace(/"/g, "&quot;") : ""}" required />
               <select id="pCat" style="max-width:140px">
-                <option value="perfume">Perfume</option>
-                <option value="cream">Cream</option>
-                <option value="other">Other</option>
+                <option value="perfume" ${!ep || ep.category === "perfume" ? "selected" : ""}>Perfume</option>
+                <option value="cream" ${ep && ep.category === "cream" ? "selected" : ""}>Cream</option>
+                <option value="other" ${ep && ep.category === "other" ? "selected" : ""}>Other</option>
               </select>
             </div>
             <div class="row">
-              <input id="pSku" placeholder="SKU" required />
-              <input id="pBarcode" placeholder="Barcode" />
-              <input id="pCost" type="number" step="0.01" placeholder="${s.costPrice}" required />
-              <input id="pRetail" type="number" step="0.01" placeholder="${s.retailPrice}" required />
-              <input id="pWholesale" type="number" step="0.01" placeholder="${s.wholesalePrice}" required />
-              <input id="pMinQty" type="number" value="5" placeholder="${s.minWholesaleQty}" />
-              <input id="pInitStock" type="number" value="10" placeholder="Initial Stock" />
+              <input id="pSku" placeholder="SKU" value="${ep ? ep.sku.replace(/"/g, "&quot;") : ""}" required />
+              <input id="pBarcode" placeholder="Barcode" value="${ep ? (ep.barcode || "").replace(/"/g, "&quot;") : ""}" />
+              <input id="pCost" type="number" step="0.01" placeholder="${s.costPrice}" value="${ep ? ep.costPrice : ""}" required />
+              <input id="pRetail" type="number" step="0.01" placeholder="${s.retailPrice}" value="${ep ? ep.retailPrice : ""}" required />
+              <input id="pWholesale" type="number" step="0.01" placeholder="${s.wholesalePrice}" value="${ep ? ep.wholesalePrice : ""}" required />
+              <input id="pMinQty" type="number" value="${ep ? ep.wholesaleMinQty : 5}" placeholder="${s.minWholesaleQty}" />
+              ${ep ? "" : `<input id="pInitStock" type="number" value="10" placeholder="Initial Stock" />`}
               <button class="btn btn-primary" type="submit">${s.save}</button>
             </div>
-          </form>`
-            : ""
-        }
-        <form id="recvForm" class="card row">
-          <strong style="min-width:120px">${s.receiveStock}</strong>
-          <select id="rProd">${state.products.map((p) => `<option value="${p.id}">${lang === "ar" ? p.nameAr : p.nameEn} (${p.currentStock})</option>`).join("")}</select>
-          <select id="rSup"><option value="">-</option>${suppliers.map((sup) => `<option value="${sup.id}">${sup.name}</option>`).join("")}</select>
-          <input id="rQty" type="number" min="1" value="5" style="max-width:100px" />
-          <input id="rCost" type="number" step="0.01" placeholder="${s.costPrice}" style="max-width:120px" />
-          <button class="btn btn-primary" type="submit">${s.save}</button>
-        </form>
-        ${
-          canManage
-            ? `
+          </form>
+          <form id="recvForm" class="card row">
+            <strong style="min-width:120px">${s.receiveStock}</strong>
+            <select id="rProd">${state.products.map((p) => `<option value="${p.id}">${lang === "ar" ? p.nameAr : p.nameEn} (${p.currentStock})</option>`).join("")}</select>
+            <select id="rSup"><option value="">-</option>${suppliers.map((sup) => `<option value="${sup.id}">${sup.name}</option>`).join("")}</select>
+            <input id="rQty" type="number" min="1" value="5" style="max-width:100px" />
+            <input id="rCost" type="number" step="0.01" placeholder="${s.costPrice}" style="max-width:120px" />
+            <button class="btn btn-primary" type="submit">${s.save}</button>
+          </form>
           <form id="adjForm" class="card row">
             <strong style="min-width:120px">${s.adjustStock}</strong>
             <select id="aProd">${state.products.map((p) => `<option value="${p.id}">${lang === "ar" ? p.nameAr : p.nameEn}</option>`).join("")}</select>
@@ -383,7 +393,10 @@
                   <td class="mono">${formatMoney(p.retailPrice)}</td>
                   <td class="mono">${formatMoney(p.wholesalePrice)}</td>
                   <td class="mono"><strong>${p.currentStock}</strong></td>
-                  <td>${canManage ? `<button class="btn btn-danger" data-del="${p.id}">${s.deleteBtn}</button>` : ""}</td>
+                  <td class="row">
+                    ${canEditProducts ? `<button class="btn" data-edit-prod="${p.id}">${s.edit}</button>` : ""}
+                    ${canDelete ? `<button class="btn btn-danger" data-del="${p.id}">${s.deleteBtn}</button>` : ""}
+                  </td>
                 </tr>`
                 )
                 .join("")}
@@ -392,39 +405,53 @@
         </div>
       </div>
     `;
+    const cancelEditProd = document.getElementById("cancelEditProd");
+    if (cancelEditProd) {
+      cancelEditProd.onclick = () => {
+        editingProduct = null;
+        renderInventory(root);
+      };
+    }
     const prodForm = document.getElementById("prodForm");
     if (prodForm) {
       prodForm.onsubmit = async (e) => {
         e.preventDefault();
+        const initEl = document.getElementById("pInitStock");
+        const prodPayload = {
+          ...(ep ? { id: ep.id } : {}),
+          nameAr: document.getElementById("pNameAr").value,
+          nameEn: document.getElementById("pNameEn").value,
+          category: document.getElementById("pCat").value,
+          sku: document.getElementById("pSku").value,
+          barcode: document.getElementById("pBarcode").value,
+          costPrice: Number(document.getElementById("pCost").value),
+          retailPrice: Number(document.getElementById("pRetail").value),
+          wholesalePrice: Number(document.getElementById("pWholesale").value),
+          wholesaleMinQty: Number(document.getElementById("pMinQty").value || 5)
+        };
+        editingProduct = null;
         await apiAction("SAVE_PRODUCT", {
-          product: {
-            nameAr: document.getElementById("pNameAr").value,
-            nameEn: document.getElementById("pNameEn").value,
-            category: document.getElementById("pCat").value,
-            sku: document.getElementById("pSku").value,
-            barcode: document.getElementById("pBarcode").value,
-            costPrice: Number(document.getElementById("pCost").value),
-            retailPrice: Number(document.getElementById("pRetail").value),
-            wholesalePrice: Number(document.getElementById("pWholesale").value),
-            wholesaleMinQty: Number(document.getElementById("pMinQty").value || 5)
-          },
-          initialStock: Number(document.getElementById("pInitStock").value || 0)
+          product: prodPayload,
+          initialStock: initEl ? Number(initEl.value || 0) : 0
         });
       };
     }
-    document.getElementById("recvForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const pid = document.getElementById("rProd").value;
-      const prod = state.products.find((p) => p.id === pid);
-      await apiAction("RECEIVE_STOCK", {
-        receipt: {
-          productId: pid,
-          supplierId: document.getElementById("rSup").value,
-          qty: Number(document.getElementById("rQty").value),
-          unitCost: Number(document.getElementById("rCost").value || (prod ? prod.costPrice : 0))
-        }
-      });
-    };
+    const recvForm = document.getElementById("recvForm");
+    if (recvForm) {
+      recvForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const pid = document.getElementById("rProd").value;
+        const prod = state.products.find((p) => p.id === pid);
+        await apiAction("RECEIVE_STOCK", {
+          receipt: {
+            productId: pid,
+            supplierId: document.getElementById("rSup").value,
+            qty: Number(document.getElementById("rQty").value),
+            unitCost: Number(document.getElementById("rCost").value || (prod ? prod.costPrice : 0))
+          }
+        });
+      };
+    }
     const adjForm = document.getElementById("adjForm");
     if (adjForm) {
       adjForm.onsubmit = async (e) => {
@@ -438,6 +465,12 @@
         });
       };
     }
+    root.querySelectorAll("[data-edit-prod]").forEach((btn) => {
+      btn.onclick = () => {
+        editingProduct = state.products.find((p) => p.id === btn.getAttribute("data-edit-prod")) || null;
+        renderInventory(root);
+      };
+    });
     root.querySelectorAll("[data-del]").forEach((btn) => {
       btn.onclick = () => apiAction("DELETE_PRODUCT", { productId: btn.getAttribute("data-del") });
     });
@@ -566,8 +599,21 @@
   function renderAdmin(root) {
     const s = t();
     const st = state.settings;
+    if (editingMember && editingMember.role === "admin" && currentUser.role !== "admin") {
+      editingMember = null;
+    }
+    const em = editingMember;
+    const members = state.members || [];
+    const activeAdmins = members.filter((x) => x.role === "admin" && x.active !== false).length;
+    const totalAdmins = members.filter((x) => x.role === "admin").length;
+    const isEditingLastActiveAdmin = Boolean(
+      em && em.role === "admin" && em.active !== false && activeAdmins <= 1
+    );
+    const roleName = (r) =>
+      r === "admin" ? s.roleAdmin : r === "manager" ? s.roleManager : r === "cashier" ? s.roleCashier : s.roleSeller;
     root.innerHTML = `
       <div class="stack">
+        ${adminNotice ? `<div class="card" style="border-color:${adminNoticeError ? "var(--danger)" : "var(--primary)"};color:${adminNoticeError ? "var(--danger)" : "inherit"}"><strong>${adminNotice}</strong></div>` : ""}
         <div class="card stack" style="border-color:var(--primary)">
           <h3 style="margin:0">${s.pcLanHeading}</h3>
           <p style="margin:0;color:var(--muted)">${s.pcLanDesc}</p>
@@ -576,17 +622,51 @@
           </div>
           <div><strong>${s.connectedDevices}:</strong> ${(state.connectedDevices || []).map((d) => d.name).join(", ") || "-"}</div>
         </div>
-        <form id="staffForm" class="card row">
-          <strong>${s.staffUsers}</strong>
-          <input id="stUser" placeholder="${s.username}" required />
-          <input id="stPass" type="password" placeholder="${s.password}" required />
-          <select id="stRole" style="max-width:150px">
-            <option value="cashier">Cashier</option>
-            <option value="manager">Manager</option>
-            ${currentUser.role === "admin" ? `<option value="admin">Admin</option>` : ""}
-          </select>
-          <button class="btn btn-primary" type="submit">${s.save}</button>
+        <form id="staffForm" class="card stack">
+          <div class="between">
+            <strong>${em ? `${s.editUser}: ${em.username || em.displayName}` : s.staffUsers}</strong>
+            ${em ? `<button type="button" id="cancelEditMemberBtn" class="btn">${s.cancel}</button>` : ""}
+          </div>
+          <div class="row">
+            <input id="stUser" placeholder="${s.username}" value="${em ? (em.username || em.displayName).replace(/"/g, "&quot;") : ""}" required />
+            <input id="stName" placeholder="${s.displayName}" value="${em ? (em.displayName || "").replace(/"/g, "&quot;") : ""}" required />
+            <input id="stPass" type="password" placeholder="${em ? s.newPassHint : s.password}" ${em ? "" : "required"} />
+            <select id="stRole" style="max-width:210px" ${isEditingLastActiveAdmin ? "disabled" : ""}>
+              <option value="seller" ${!em || em.role === "seller" ? "selected" : ""}>${s.roleSeller}</option>
+              <option value="cashier" ${em && em.role === "cashier" ? "selected" : ""}>${s.roleCashier}</option>
+              <option value="manager" ${em && em.role === "manager" ? "selected" : ""}>${s.roleManager}</option>
+              ${currentUser.role === "admin" ? `<option value="admin" ${em && em.role === "admin" ? "selected" : ""}>${s.roleAdmin}</option>` : ""}
+            </select>
+            <label class="row" style="max-width:120px;align-items:center">
+              <input id="stActive" type="checkbox" ${!em || em.active !== false ? "checked" : ""} ${isEditingLastActiveAdmin ? "disabled" : ""} style="width:auto" />
+              <span>${s.activeUser}</span>
+            </label>
+            <button class="btn btn-primary" type="submit">${s.save}</button>
+          </div>
         </form>
+        <div class="card">
+          <table>
+            <thead><tr><th>${s.displayName}</th><th>${s.username}</th><th>Role</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              ${members
+                .map((m) => {
+                  const canManageThis = currentUser.role === "admin" || m.role !== "admin";
+                  const isLastProtectedAdmin = m.role === "admin" && ((m.active !== false && activeAdmins <= 1) || totalAdmins <= 1);
+                  return `<tr>
+                    <td>${m.displayName}</td>
+                    <td class="mono">${m.username || m.uid}</td>
+                    <td>${roleName(m.role)}</td>
+                    <td>${m.active === false ? "✕" : "✓"}</td>
+                    <td class="row">
+                      ${canManageThis ? `<button class="btn" data-edit-member="${m.uid}">${s.editUser}</button>` : ""}
+                      ${canManageThis && !isLastProtectedAdmin ? `<button class="btn btn-danger" data-del-member="${m.uid}">${s.deleteBtn}</button>` : ""}
+                    </td>
+                  </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
         ${
           currentUser.role === "admin"
             ? `<form id="themeForm" class="card row">
@@ -608,16 +688,60 @@
         }
       </div>
     `;
-    document.getElementById("staffForm").onsubmit = (e) => {
-      e.preventDefault();
-      apiAction("UPSERT_STAFF", {
-        staff: {
-          username: document.getElementById("stUser").value,
-          password: document.getElementById("stPass").value,
-          displayName: document.getElementById("stUser").value,
-          role: document.getElementById("stRole").value
+    const cancelMemberBtn = document.getElementById("cancelEditMemberBtn");
+    if (cancelMemberBtn) {
+      cancelMemberBtn.onclick = () => {
+        editingMember = null;
+        renderAdmin(root);
+      };
+    }
+    root.querySelectorAll("[data-edit-member]").forEach((btn) => {
+      btn.onclick = () => {
+        editingMember = (state.members || []).find((m) => m.uid === btn.getAttribute("data-edit-member")) || null;
+        adminNotice = "";
+        adminNoticeError = false;
+        renderAdmin(root);
+      };
+    });
+    root.querySelectorAll("[data-del-member]").forEach((btn) => {
+      btn.onclick = async () => {
+        const uid = btn.getAttribute("data-del-member");
+        if (!confirm(s.confirmDeleteUser)) return;
+        try {
+          await apiAction("DELETE_STAFF", { uid });
+          if (editingMember && editingMember.uid === uid) editingMember = null;
+          adminNotice = s.deletedMsg;
+          adminNoticeError = false;
+          renderApp();
+        } catch (err) {
+          adminNotice = err.message === "Not allowed" ? s.notAllowed : err.message;
+          adminNoticeError = true;
+          renderApp();
         }
-      });
+      };
+    });
+    document.getElementById("staffForm").onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await apiAction("UPSERT_STAFF", {
+          staff: {
+            uid: editingMember ? editingMember.uid : "",
+            username: document.getElementById("stUser").value,
+            displayName: document.getElementById("stName").value,
+            password: document.getElementById("stPass").value,
+            role: document.getElementById("stRole").value,
+            active: document.getElementById("stActive").checked
+          }
+        });
+        editingMember = null;
+        adminNotice = s.savedMsg;
+        adminNoticeError = false;
+        renderApp();
+      } catch (err) {
+        adminNotice = err.message === "Not allowed" ? s.notAllowed : err.message;
+        adminNoticeError = true;
+        renderApp();
+      }
     };
     const themeForm = document.getElementById("themeForm");
     if (themeForm) {
@@ -690,6 +814,10 @@
     }
     currentUser = data.user;
     state = data.state;
+    activeTab = currentUser.role === "cashier" ? "inventory" : "pos";
+    editingMember = null;
+    editingProduct = null;
+    adminNotice = "";
     document.getElementById("loginView").classList.add("hidden");
     document.getElementById("appView").classList.remove("hidden");
     await refreshState();

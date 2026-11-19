@@ -207,6 +207,8 @@ function createSeedState() {
   const members = [
     {
       uid: "local_admin_omini",
+      username: DEFAULT_ADMIN_USERNAME,
+      passwordHash: DEFAULT_ADMIN_PASSWORD_HASH,
       displayName: "omini",
       role: "admin",
       active: true,
@@ -290,46 +292,142 @@ class PcStoreEngine {
 
   authenticateLocal(username, password) {
     const cleanUser = String(username || "").trim().toLowerCase();
+    if (!cleanUser) return null;
     const passHash = sha256(String(password || ""));
+
+    const members = this.state.members || [];
+    const matchedMember = members.find((m) => {
+      const mUser = String(m.username || "").trim().toLowerCase();
+      return mUser && mUser === cleanUser && m.passwordHash && m.passwordHash === passHash;
+    });
+    if (matchedMember) {
+      if (matchedMember.active === false) return null;
+      return {
+        uid: matchedMember.uid,
+        username: matchedMember.username,
+        displayName: matchedMember.displayName,
+        role: matchedMember.role
+      };
+    }
+
     const match = (this.state.localStaffCredentials || []).find(
-      (c) => String(c.username || "").toLowerCase() === cleanUser && c.passwordHash === passHash
+      (c) => String(c.username || "").trim().toLowerCase() === cleanUser && c.passwordHash === passHash
     );
     if (!match) return null;
+    const memberRecord = members.find((m) => m.uid === match.uid);
+    if (memberRecord && memberRecord.active === false) return null;
     return {
       uid: match.uid,
+      username: match.username,
       displayName: match.displayName,
-      role: match.role
+      role: memberRecord ? memberRecord.role : match.role
     };
   }
 
-  upsertStaffCredential(actorRole, { uid, username, password, displayName, role }) {
+  upsertStaffCredential(actorRole, { uid, username, password, displayName, role, active = true }) {
     if (actorRole !== "admin" && actorRole !== "manager") {
-      throw new Error("Permission denied");
-    }
-    if (role === "admin" && actorRole !== "admin") {
-      throw new Error("Only Admin can create Admin users");
+      throw new Error("Not allowed");
     }
     const cleanUsername = String(username || "").trim();
-    if (!cleanUsername || !password) throw new Error("Username and password required");
+    if (!cleanUsername) throw new Error("Username is required");
+    const targetRole = String(role || "seller").toLowerCase();
+    if (!["admin", "manager", "cashier", "seller"].includes(targetRole)) {
+      throw new Error("Invalid role");
+    }
+
+    const members = this.state.members || [];
+    const creds = this.state.localStaffCredentials || [];
+    const cleanUid = String(uid || "").trim();
+
+    const byUid = cleanUid ? members.find((m) => m.uid === cleanUid) || creds.find((c) => c.uid === cleanUid) : null;
+    const byUsername =
+      members.find((m) => String(m.username || "").trim().toLowerCase() === cleanUsername.toLowerCase()) ||
+      creds.find((c) => String(c.username || "").trim().toLowerCase() === cleanUsername.toLowerCase());
+
+    if (byUid && byUsername && byUid.uid !== byUsername.uid) {
+      throw new Error("Username is already in use");
+    }
+
+    const existing = byUid || byUsername;
+    if ((targetRole === "admin" || (existing && existing.role === "admin")) && actorRole !== "admin") {
+      throw new Error("Not allowed");
+    }
+
+    const isActive = active !== false;
+    if (existing && existing.role === "admin" && (targetRole !== "admin" || !isActive)) {
+      const remainingActiveAdmins = members.filter(
+        (m) => m.role === "admin" && m.active !== false && m.uid !== existing.uid
+      ).length;
+      if (remainingActiveAdmins === 0) {
+        throw new Error("Cannot demote or deactivate the last remaining admin");
+      }
+    }
+
+    const rawPassword = String(password || "");
+    const passwordHash = rawPassword ? sha256(rawPassword) : (existing && existing.passwordHash) || "";
+    if (!passwordHash) {
+      throw new Error("Username and password required");
+    }
+
+    const resolvedUid = (existing && existing.uid) || cleanUid || genId("staff");
+    const resolvedName = String(displayName || cleanUsername).trim();
+
     const entry = {
-      uid: uid || genId("staff"),
+      uid: resolvedUid,
       username: cleanUsername,
-      passwordHash: sha256(password),
-      displayName: displayName || cleanUsername,
-      role: role || "cashier"
+      passwordHash,
+      displayName: resolvedName,
+      role: targetRole
     };
     this.state.localStaffCredentials = [
-      ...this.state.localStaffCredentials.filter((c) => c.username.toLowerCase() !== cleanUsername.toLowerCase()),
+      ...creds.filter((c) => c.uid !== resolvedUid && String(c.username || "").toLowerCase() !== cleanUsername.toLowerCase()),
       entry
     ];
     this.upsertMember(actorRole, {
-      uid: entry.uid,
-      displayName: entry.displayName,
-      role: entry.role,
-      active: true
+      uid: resolvedUid,
+      username: cleanUsername,
+      passwordHash,
+      displayName: resolvedName,
+      role: targetRole,
+      active: isActive
     });
     this.persist();
-    return { uid: entry.uid, displayName: entry.displayName, role: entry.role };
+    return { uid: entry.uid, username: entry.username, displayName: entry.displayName, role: entry.role, active: isActive };
+  }
+
+  deleteStaffCredential(actorRole, uid) {
+    if (actorRole !== "admin" && actorRole !== "manager") {
+      throw new Error("Not allowed");
+    }
+    const cleanUid = String(uid || "").trim();
+    if (!cleanUid) throw new Error("User ID is required");
+
+    const members = this.state.members || [];
+    const target = members.find((m) => m.uid === cleanUid);
+    if (!target) {
+      throw new Error("User not found");
+    }
+    if (target.role === "admin" && actorRole !== "admin") {
+      throw new Error("Not allowed");
+    }
+    if (target.role === "admin") {
+      const remainingActiveAdmins = members.filter(
+        (m) => m.role === "admin" && m.active !== false && m.uid !== target.uid
+      ).length;
+      const remainingTotalAdmins = members.filter(
+        (m) => m.role === "admin" && m.uid !== target.uid
+      ).length;
+      if (remainingActiveAdmins === 0 || remainingTotalAdmins === 0) {
+        throw new Error("Cannot delete the last remaining admin");
+      }
+    }
+
+    this.state.members = members.filter((m) => m.uid !== target.uid);
+    this.state.localStaffCredentials = (this.state.localStaffCredentials || []).filter(
+      (c) => c.uid !== target.uid
+    );
+    this.persist();
+    return { deleted: true, uid: target.uid };
   }
 
   getStockMap() {
@@ -420,8 +518,8 @@ class PcStoreEngine {
   }
 
   saveProduct(actor, input, initialStock = 0) {
-    if (actor.role !== "admin" && actor.role !== "manager") {
-      throw new Error("Only Admin or General Manager can manage products");
+    if (!["admin", "manager", "cashier"].includes(actor.role)) {
+      throw new Error("Seller cannot update products");
     }
     const ts = nowMillis();
     const isNew = !input.id;
@@ -493,6 +591,9 @@ class PcStoreEngine {
   }
 
   completeSale(actor, { items, discount = 0, paymentMethod = "cash", customerId = "" }) {
+    if (!["admin", "manager", "seller"].includes(actor.role)) {
+      throw new Error("Cashier cannot complete sales");
+    }
     const openDay = this.getOpenBusinessDay();
     if (!openDay) throw new Error("Open business day first");
     if (!Array.isArray(items) || items.length === 0) throw new Error("Cart is empty");
@@ -593,6 +694,9 @@ class PcStoreEngine {
   }
 
   returnInvoice(actor, invoiceId) {
+    if (!["admin", "manager", "seller"].includes(actor.role)) {
+      throw new Error("Cashier cannot process returns");
+    }
     const inv = this.state.invoices.find((i) => i.id === invoiceId);
     if (!inv || inv.status === "returned") return null;
     const ts = nowMillis();
@@ -633,6 +737,9 @@ class PcStoreEngine {
   }
 
   receiveStock(actor, { productId, supplierId = "", qty, unitCost }) {
+    if (!["admin", "manager", "cashier"].includes(actor.role)) {
+      throw new Error("Seller cannot receive stock");
+    }
     const prod = this.state.products.find((p) => p.id === productId);
     if (!prod) throw new Error("Product not found");
     const q = Number(qty || 0);
@@ -665,8 +772,8 @@ class PcStoreEngine {
   }
 
   adjustStock(actor, { productId, qtyDelta, reason }) {
-    if (actor.role !== "admin" && actor.role !== "manager") {
-      throw new Error("Admin or General Manager required");
+    if (!["admin", "manager", "cashier"].includes(actor.role)) {
+      throw new Error("Seller cannot adjust stock");
     }
     const delta = Number(qtyDelta || 0);
     if (!delta || !String(reason || "").trim()) throw new Error("Delta and reason required");
@@ -746,16 +853,34 @@ class PcStoreEngine {
     this.persist();
   }
 
-  upsertMember(actorRole, { uid, displayName, role, active = true }) {
-    if (actorRole !== "admin" && actorRole !== "manager") throw new Error("Permission denied");
+  upsertMember(actorRole, { uid, username, passwordHash, displayName, role, active = true }) {
+    if (actorRole !== "admin" && actorRole !== "manager") throw new Error("Not allowed");
     const ts = nowMillis();
     const cleanUid = String(uid || "").trim();
+    const targetRole = String(role || "seller").toLowerCase();
+    if (!["admin", "manager", "cashier", "seller"].includes(targetRole)) {
+      throw new Error("Invalid role");
+    }
     const existing = this.state.members.find((m) => m.uid === cleanUid);
+    if ((targetRole === "admin" || (existing && existing.role === "admin")) && actorRole !== "admin") {
+      throw new Error("Not allowed");
+    }
+    const isActive = active !== false;
+    if (existing && existing.role === "admin" && (targetRole !== "admin" || !isActive)) {
+      const remainingActiveAdmins = (this.state.members || []).filter(
+        (m) => m.role === "admin" && m.active !== false && m.uid !== existing.uid
+      ).length;
+      if (remainingActiveAdmins === 0) {
+        throw new Error("Cannot demote or deactivate the last remaining admin");
+      }
+    }
     const entity = {
       uid: cleanUid,
+      username: String(username ?? (existing && existing.username) ?? cleanUid).trim(),
+      passwordHash: String(passwordHash ?? (existing && existing.passwordHash) ?? ""),
       displayName: String(displayName || "").trim(),
-      role,
-      active,
+      role: targetRole,
+      active: isActive,
       createdAtMillis: existing ? existing.createdAtMillis : ts,
       updatedAtMillis: ts
     };
@@ -862,6 +987,19 @@ class PcStoreEngine {
     this.state.holidays = mergeByKeyLww(this.state.holidays, incoming.holidays, "id");
     this.state.auditLogs = mergeImmutableUnion(this.state.auditLogs, incoming.auditLogs, "id").slice(0, 500);
     this.state.members = mergeByKeyLww(this.state.members, incoming.members, "uid");
+    const credByUid = new Map((this.state.localStaffCredentials || []).map((c) => [c.uid, c]));
+    for (const m of this.state.members) {
+      if (m.username && m.passwordHash) {
+        credByUid.set(m.uid, {
+          uid: m.uid,
+          username: m.username,
+          passwordHash: m.passwordHash,
+          displayName: m.displayName || m.username,
+          role: m.role
+        });
+      }
+    }
+    this.state.localStaffCredentials = Array.from(credByUid.values());
     this.state.releases = mergeImmutableUnion(this.state.releases, incoming.releases, "id").sort(
       (a, b) => Number(b.versionCode || 0) - Number(a.versionCode || 0)
     );

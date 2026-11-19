@@ -1,0 +1,21 @@
+Omini POS - Windows App Download Folder
+========================================
+
+1) GitHub Automated Windows .exe Installer (Recommended):
+   - Push this repository to GitHub.
+   - Open the GitHub repository -> "Actions" tab -> "Build Windows EXE Installer".
+   - Download either:
+     * Omini-POS-Windows-Installer   -> Omini-POS-Setup-1.0.0.exe (NSIS Installer)
+     * Omini-POS-App-Files-Folder    -> Full Windows app files folder + installer + portable .exe
+
+2) Run Offline Directly on Windows (with Node.js 20+):
+   - Double-click: START_OFFLINE_POS.bat
+   - Opens Omini POS offline on http://127.0.0.1:8787 (with LAN sync for Android on port 8787).
+
+3) Build the Windows .exe Installer Locally on Windows:
+   - Double-click: BUILD_WINDOWS_EXE_INSTALLER.bat
+   - Outputs: app\dist\Omini-POS-Setup-1.0.0.exe and app\dist\win-unpacked\
+
+Default Admin Credentials:
+  Username: omini
+  Password: admin116

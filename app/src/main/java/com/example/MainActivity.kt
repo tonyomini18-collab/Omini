@@ -51,11 +51,13 @@ private fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     awaitClose { removeAuthStateListener(listener) }
 }
 
-private data class ActiveSessionIdentity(
-    val uid: String,
-    val displayName: String,
-    val email: String?
-)
+    private data class ActiveSessionIdentity(
+        val uid: String,
+        val displayName: String,
+        val email: String?,
+        val roleKey: String
+    )
+
 
 @Composable
 private fun AromaPosRoot() {
@@ -70,16 +72,21 @@ private fun AromaPosRoot() {
     val savedDarkMode by prefs.darkModeFlow.collectAsStateWithLifecycle(initialValue = false)
     val scope = rememberCoroutineScope()
 
+    val db = remember { AppDatabase.getInstance(appContext) }
+    val dao = remember { db.storeDao() }
+
     val activeIdentity = when {
         currentUser != null -> ActiveSessionIdentity(
             uid = currentUser!!.uid,
             displayName = currentUser!!.displayName ?: "",
-            email = currentUser!!.email
+            email = currentUser!!.email,
+            roleKey = "admin"
         )
         localSession != null -> ActiveSessionIdentity(
             uid = localSession!!.uid,
             displayName = localSession!!.displayName,
-            email = null
+            email = null,
+            roleKey = localSession!!.roleKey
         )
         else -> null
     }
@@ -104,7 +111,7 @@ private fun AromaPosRoot() {
                     }
                 },
                 onLocalAdminLogin = { username, password ->
-                    prefs.verifyAndSignInLocalAdmin(username, password)
+                    prefs.verifyAndSignInLocalUser(dao, username, password)
                 },
                 onAuthSuccess = { /* authStateFlow or localSessionFlow updates automatically */ }
             )
@@ -115,8 +122,6 @@ private fun AromaPosRoot() {
                 key = activeIdentity.uid,
                 factory = viewModelFactory {
                     initializer {
-                        val db = AppDatabase.getInstance(appContext)
-                        val dao = db.storeDao()
                         val remote = FirestoreRepository(appContext)
                         val connectivity = ConnectivityObserver(appContext)
                         val syncEngine = SyncEngine(
@@ -133,7 +138,8 @@ private fun AromaPosRoot() {
                             prefs = prefs,
                             currentUserId = activeIdentity.uid,
                             currentUserDisplayName = activeIdentity.displayName,
-                            currentUserEmail = activeIdentity.email
+                            currentUserEmail = activeIdentity.email,
+                            initialRoleKey = activeIdentity.roleKey
                         )
                     }
                 }

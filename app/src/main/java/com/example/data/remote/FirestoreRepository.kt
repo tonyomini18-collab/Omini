@@ -491,6 +491,21 @@ class FirestoreRepository(
         handleFirestoreError(e, OperationType.WRITE, "stores/$storeId/members/${member.uid}")
     }
 
+    suspend fun deleteMember(storeId: String, memberUid: String, memberUids: List<String>): Result<Unit> = runCatching {
+        requireUserId()
+        storeDoc(storeId).collection("members").document(memberUid).delete().await()
+        if (memberUid in memberUids) {
+            val remainingMembers = memberUids.filterNot { it == memberUid }
+            runCatching {
+                storeDoc(storeId).update("memberUids", remainingMembers, "updatedAt", FieldValue.serverTimestamp()).await()
+            }
+        }
+        Unit
+    }.onFailure { e ->
+        if (e is CancellationException) throw e
+        handleFirestoreError(e, OperationType.DELETE, "stores/$storeId/members/$memberUid")
+    }
+
     // Settings
     fun observeSettings(storeId: String): Flow<FsStoreSettings?> {
         val uid = requireUserId()

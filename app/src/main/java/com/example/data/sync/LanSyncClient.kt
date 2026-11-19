@@ -259,6 +259,8 @@ object LanSyncClient {
                 members.forEach { m ->
                     put(JSONObject().apply {
                         put("uid", m.uid)
+                        put("username", m.username)
+                        put("passwordHash", m.passwordHash)
                         put("displayName", m.displayName)
                         put("role", m.role)
                         put("active", m.active)
@@ -495,20 +497,28 @@ object LanSyncClient {
         }
         if (logsToInsert.isNotEmpty()) dao.insertAuditLogs(logsToInsert)
 
+        val localMembersMap = dao.getMembersSnapshot().associateBy { it.uid }
         val memArr = resp.optJSONArray("members") ?: JSONArray()
         val membersToUpsert = mutableListOf<StoreMemberEntity>()
         for (i in 0 until memArr.length()) {
             val o = memArr.getJSONObject(i)
-            membersToUpsert.add(
-                StoreMemberEntity(
-                    uid = o.getString("uid"),
-                    displayName = o.optString("displayName"),
-                    role = o.optString("role", "cashier"),
-                    active = o.optBoolean("active", true),
-                    createdAtMillis = o.optLong("createdAtMillis", System.currentTimeMillis()),
-                    updatedAtMillis = o.optLong("updatedAtMillis", System.currentTimeMillis())
+            val uid = o.getString("uid")
+            val remoteUpdated = o.optLong("updatedAtMillis", 0L)
+            val local = localMembersMap[uid]
+            if (local == null || remoteUpdated >= local.updatedAtMillis) {
+                membersToUpsert.add(
+                    StoreMemberEntity(
+                        uid = uid,
+                        username = o.optString("username").ifBlank { local?.username ?: "" },
+                        passwordHash = o.optString("passwordHash").ifBlank { local?.passwordHash ?: "" },
+                        displayName = o.optString("displayName"),
+                        role = o.optString("role", "seller"),
+                        active = o.optBoolean("active", true),
+                        createdAtMillis = o.optLong("createdAtMillis", System.currentTimeMillis()),
+                        updatedAtMillis = remoteUpdated
+                    )
                 )
-            )
+            }
         }
         if (membersToUpsert.isNotEmpty()) dao.upsertMembers(membersToUpsert)
 

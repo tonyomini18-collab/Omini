@@ -129,8 +129,10 @@ data class AuditLogEntity(
 @Entity(tableName = "store_members")
 data class StoreMemberEntity(
     @PrimaryKey val uid: String,
+    val username: String = "",
+    val passwordHash: String = "",
     val displayName: String,
-    val role: String, // "admin", "manager", "cashier"
+    val role: String, // "admin", "manager", "cashier", "seller"
     val active: Boolean = true,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val updatedAtMillis: Long = System.currentTimeMillis()

@@ -2,17 +2,27 @@ name: Build Windows EXE Installer
 
 on:
   push:
-    paths:
-      - "pc-desktop/**"
-      - ".github/workflows/build-windows-exe.yml"
+    branches:
+      - "**"
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Publish GitHub Release with .exe installer and app files zip"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows-installer:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: pc-desktop
 
     steps:
       - name: Checkout repository
@@ -23,20 +33,65 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install dependencies
+      - name: Install PC desktop dependencies
+        working-directory: pc-desktop
         run: npm install
 
       - name: Run unit and LAN sync tests
+        working-directory: pc-desktop
         run: npm test
 
-      - name: Build Windows NSIS installer (.exe)
+      - name: Build Windows NSIS installer (.exe) and unpacked app folder
+        working-directory: pc-desktop
         run: npm run build:win
+
+      - name: Package downloadable Windows app files folder and zip
+        shell: pwsh
+        run: |
+          $bundleDir = "Omini-POS-Windows-Download"
+          $portableDir = "$bundleDir/Omini-POS-Portable-App"
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+
+          Copy-Item "pc-desktop/dist/*.exe" -Destination $bundleDir -Force
+          Copy-Item "pc-desktop/dist/win-unpacked/*" -Destination $portableDir -Recurse -Force
+
+          @"
+          Omini POS - Windows Download Package
+          ====================================
+          1. Run Omini-POS-Setup-*.exe to install Omini POS on Windows (adds Start Menu & Desktop shortcuts).
+          2. Or open Omini-POS-Portable-App\Omini POS.exe directly without installing.
+          3. Default Admin Login: omini / admin116
+          4. Connect your Android app via Admin & System -> PC LAN Sync (port 8787).
+          "@ | Set-Content -Path "$bundleDir/README.txt" -Encoding UTF8
+
+          Compress-Archive -Path "$bundleDir/*" -DestinationPath "Omini-POS-Windows-App-Files.zip" -Force
 
       - name: Upload Windows .exe installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Aroma-POS-Windows-Installer
-          path: |
-            pc-desktop/dist/*.exe
-            pc-desktop/dist/latest.yml
+          name: Omini-POS-Windows-Installer
+          path: pc-desktop/dist/*.exe
           if-no-files-found: error
+
+      - name: Upload downloadable app files folder artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Omini-POS-App-Files-Folder
+          path: |
+            Omini-POS-Windows-Download/**
+            Omini-POS-Windows-App-Files.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release with .exe installer and app files zip
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('win-v1.0.0-{0}', github.run_number) }}
+          name: "Omini POS Windows Installer & App Files"
+          body: |
+            Automated Windows build for Omini POS:
+            - **Omini-POS-Setup-*.exe**: Windows NSIS Installer
+            - **Omini-POS-Windows-App-Files.zip**: Complete folder with installer + portable app files
+          files: |
+            pc-desktop/dist/*.exe
+            Omini-POS-Windows-App-Files.zip

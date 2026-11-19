@@ -58,12 +58,12 @@ function sendJson(res, status, data) {
 }
 
 function sanitizeStateForRole(engine, role) {
-  const isCashier = role === "cashier";
+  const hideCosts = role === "cashier" || role === "seller";
   const products = engine.getProductsWithStock(false).map((p) =>
-    isCashier ? { ...p, costPrice: 0 } : p
+    hideCosts ? { ...p, costPrice: 0 } : p
   );
   const invoices = engine.state.invoices.map((inv) =>
-    isCashier ? { ...inv, costTotal: 0 } : inv
+    hideCosts ? { ...inv, costTotal: 0 } : inv
   );
   return {
     products,
@@ -73,7 +73,7 @@ function sanitizeStateForRole(engine, role) {
     businessDays: engine.state.businessDays,
     openBusinessDay: engine.getOpenBusinessDay(),
     holidays: engine.state.holidays,
-    auditLogs: isCashier ? [] : engine.state.auditLogs.slice(0, 200),
+    auditLogs: hideCosts ? [] : engine.state.auditLogs.slice(0, 200),
     members: engine.state.members,
     settings: engine.state.settings,
     releases: engine.state.releases,
@@ -186,6 +186,9 @@ function startPcServer({
           case "UPSERT_STAFF":
             result = engine.upsertStaffCredential(actor.role, body.staff);
             break;
+          case "DELETE_STAFF":
+            result = engine.deleteStaffCredential(actor.role, body.uid);
+            break;
           case "SAVE_SETTINGS":
             result = engine.saveSettings(actor, body.settings);
             break;
@@ -238,7 +241,7 @@ function startPcServer({
 
 if (require.main === module) {
   startPcServer().then(({ port, lanUrls }) => {
-    console.log(`Aroma POS PC Server running offline-ready on http://127.0.0.1:${port}`);
+    console.log(`Omini POS PC Server running offline-ready on http://127.0.0.1:${port}`);
     if (lanUrls.length > 0) {
       console.log(`Connect Android App (same Wi-Fi) to: ${lanUrls.join(", ")}`);
     }

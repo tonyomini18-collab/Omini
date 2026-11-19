@@ -13,27 +13,34 @@ Offline-first Windows / Desktop POS & Inventory companion for the Aroma POS Andr
   - Includes Firebase Firestore sync connector (`src/electron/firebase-cloud-sync.js`) pointing to the shared named database.
   - Includes `electron-builder` NSIS configuration and `electron-updater` (never interrupts an open business day or active cart).
 
-## Build the Windows Installer (`.exe`)
+## Build & Download the Windows Installer (`.exe`) & App Files Folder
 
-The project uses `electron-builder` (NSIS) configured in `package.json` with custom app/installer icons (`build/icon.ico` & `build/icon.png`) and produces `pc-desktop/dist/Aroma-POS-Setup-1.0.0.exe` (preserving store data on upgrades/uninstall).
+The project uses `electron-builder` (NSIS) configured in `package.json` with custom app/installer icons (`assets/icon.ico` & `assets/icon.png`) and produces:
+- `Aroma-POS-Setup-1.0.0.exe` (Windows NSIS Installer)
+- `win-unpacked/` (Portable runnable Windows app files folder)
+- `/Aroma-POS-Download/` (Self-contained workspace folder with app files and one-click Windows scripts)
 
-### Option A — Build locally on a Windows PC (One-Click)
-1. Install [Node.js 20+](https://nodejs.org/) on Windows.
-2. Double-click **`BUILD_WINDOWS_INSTALLER.bat`** (or run `./BUILD_WINDOWS_INSTALLER.ps1` in PowerShell).
-3. The script installs dependencies, runs `npm test`, and outputs `pc-desktop\dist\Aroma-POS-Setup-1.0.0.exe`.
-
-### Option B — Build automatically via GitHub Actions (No Windows PC needed for build)
+### Option A — Build & Download Automatically in GitHub (Recommended)
 1. Push this repository to GitHub (using AI Studio's Push to GitHub option).
-2. Open the repository's **Actions** tab and run **Build Windows EXE Installer** (`.github/workflows/build-windows-exe.yml`).
-3. Download the **`Aroma-POS-Windows-Installer`** artifact containing `Aroma-POS-Setup-1.0.0.exe`.
+2. The **Build Windows EXE Installer** workflow runs automatically on push (or manually via **Actions -> Run workflow**).
+3. Download from the workflow run's **Artifacts**:
+   - **`Aroma-POS-Windows-Installer`**: direct `Aroma-POS-Setup-1.0.0.exe` installer.
+   - **`Aroma-POS-App-Files-Folder`**: complete folder containing the `.exe` installer, `Aroma-POS-Portable-App/` unpacked files, and `Aroma-POS-Windows-App-Files.zip`.
+   *(Running the workflow manually with `create_release = true` or pushing a `v*` tag also publishes a GitHub Release with both files attached.)*
+
+### Option B — Use the Pre-Packaged `/Aroma-POS-Download/` Folder on Windows
+1. Download/copy the **`Aroma-POS-Download`** folder to a Windows PC (with Node.js 20+).
+2. Double-click **`START_OFFLINE_POS.bat`** to launch immediately in offline mode (`http://127.0.0.1:8787`), or double-click **`BUILD_WINDOWS_EXE_INSTALLER.bat`** to compile the `.exe` installer locally.
 
 ## Commands (on PC / Windows)
 ```bash
 cd pc-desktop
-npm install          # install Electron, electron-builder, electron-updater, firebase
-npm start            # launch offline PC server & open http://127.0.0.1:8787
-npm run electron     # launch native Electron desktop window
-npm run build:win    # build Windows NSIS .exe installer into pc-desktop/dist/
-npm test             # run unit & LAN sync integration tests (zero external deps required)
+npm install                   # install Electron, electron-builder, electron-updater, firebase
+npm start                     # launch offline PC server & open http://127.0.0.1:8787
+npm run electron              # launch native Electron desktop window
+npm run prepare:download-folder  # refresh root /Aroma-POS-Download/ bundle folder
+npm run build:win             # build Windows NSIS .exe installer into pc-desktop/dist/
+npm test                      # run unit & LAN sync integration tests (zero external deps required)
 ```
+
 

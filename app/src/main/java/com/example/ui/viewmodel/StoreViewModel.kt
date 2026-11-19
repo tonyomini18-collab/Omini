@@ -51,13 +51,18 @@ class StoreViewModel(
     private val prefs: PreferencesManager,
     private val currentUserId: String,
     private val currentUserDisplayName: String,
-    private val currentUserEmail: String?
+    private val currentUserEmail: String?,
+    private val initialRoleKey: String = "admin"
 ) : ViewModel() {
+
+    private val initialRole = UserRole.fromKey(initialRoleKey)
 
     private val _uiState = MutableStateFlow(
         StoreUiState(
             userId = currentUserId,
-            userName = currentUserDisplayName.ifBlank { currentUserEmail ?: "Staff" }
+            userName = currentUserDisplayName.ifBlank { currentUserEmail ?: "Staff" },
+            actualRole = initialRole,
+            activeTab = if (initialRole.canSell()) MainTab.POS else MainTab.INVENTORY
         )
     )
     val uiState: StateFlow<StoreUiState> = _uiState.asStateFlow()
@@ -82,14 +87,29 @@ class StoreViewModel(
                     preferredLanguage = langCode
                 ).getOrElse {
                     Log.w("StoreVM", "Offline/fallback storeId initialization", it)
-                    savedStoreId.ifBlank { currentUserId }
+                    savedStoreId.ifBlank { PreferencesManager.DEFAULT_ADMIN_UID }
                 }
             } else {
-                savedStoreId.ifBlank { currentUserId }
+                savedStoreId.ifBlank { PreferencesManager.DEFAULT_ADMIN_UID }
             }
 
             prefs.setActiveStoreId(storeId)
             _uiState.update { it.copy(storeId = storeId, isLoading = false) }
+
+            // Ensure default local admin record exists in store_members for password editing & sync
+            val currentMembers = dao.getMembersSnapshot()
+            if (currentMembers.none { it.uid == PreferencesManager.DEFAULT_ADMIN_UID }) {
+                dao.upsertMember(
+                    StoreMemberEntity(
+                        uid = PreferencesManager.DEFAULT_ADMIN_UID,
+                        username = PreferencesManager.DEFAULT_ADMIN_USERNAME,
+                        passwordHash = PreferencesManager.DEFAULT_ADMIN_PASSWORD_HASH,
+                        displayName = PreferencesManager.DEFAULT_ADMIN_USERNAME,
+                        role = UserRole.ADMIN.key,
+                        active = true
+                    )
+                )
+            }
 
             if (canCloud) {
                 syncEngine.startListeners(viewModelScope, storeId)
@@ -195,9 +215,17 @@ class StoreViewModel(
                 _uiState.update { state ->
                     val myMember = b.members.find { it.uid == currentUserId }
                     val actualRole = when {
-                        state.storeId == currentUserId -> UserRole.ADMIN
+                        currentUserId == PreferencesManager.DEFAULT_ADMIN_UID -> UserRole.ADMIN
+                        remote.isCloudAuthenticated() && state.storeId == currentUserId -> UserRole.ADMIN
                         myMember != null -> UserRole.fromKey(myMember.role)
                         else -> state.actualRole
+                    }
+                    val effective = state.previewRole ?: actualRole
+                    val safeTab = when {
+                        state.activeTab == MainTab.POS && !effective.canSell() -> MainTab.INVENTORY
+                        state.activeTab == MainTab.REPORTS && !effective.canViewProfitAndReports() -> if (effective.canSell()) MainTab.POS else MainTab.INVENTORY
+                        state.activeTab == MainTab.ADMIN && !effective.canManageUsers() && !effective.canAccessSystemAdmin() -> if (effective.canSell()) MainTab.POS else MainTab.INVENTORY
+                        else -> state.activeTab
                     }
                     val lastClosed = b.days.firstOrNull { it.status == "closed" }
                     val next = state.copy(
@@ -207,7 +235,8 @@ class StoreViewModel(
                         holidays = b.holidays,
                         auditLogs = b.logs,
                         members = b.members,
-                        actualRole = actualRole
+                        actualRole = actualRole,
+                        activeTab = safeTab
                     )
                     next.copy(notifications = buildNotifications(next))
                 }
@@ -267,6 +296,7 @@ class StoreViewModel(
         touchActivity()
         val role = _uiState.value.effectiveRole
         val allowed = when (tab) {
+            MainTab.POS -> role.canSell()
             MainTab.REPORTS -> role.canViewProfitAndReports()
             MainTab.ADMIN -> role.canManageUsers() || role.canAccessSystemAdmin()
             else -> true
@@ -305,9 +335,12 @@ class StoreViewModel(
         if (_uiState.value.actualRole != UserRole.ADMIN) return
         _uiState.update { state ->
             val next = state.copy(previewRole = role)
+            val effective = next.effectiveRole
+            val defaultTab = if (effective.canSell()) MainTab.POS else MainTab.INVENTORY
             val safeTab = when {
-                next.activeTab == MainTab.REPORTS && !next.effectiveRole.canViewProfitAndReports() -> MainTab.POS
-                next.activeTab == MainTab.ADMIN && !next.effectiveRole.canManageUsers() -> MainTab.POS
+                next.activeTab == MainTab.POS && !effective.canSell() -> MainTab.INVENTORY
+                next.activeTab == MainTab.REPORTS && !effective.canViewProfitAndReports() -> defaultTab
+                next.activeTab == MainTab.ADMIN && !effective.canManageUsers() && !effective.canAccessSystemAdmin() -> defaultTab
                 else -> next.activeTab
             }
             next.copy(activeTab = safeTab, notifications = buildNotifications(next))
@@ -414,6 +447,12 @@ class StoreViewModel(
     // --- POS & CART ---
     fun addToCartByBarcode(code: String): Boolean {
         touchActivity()
+        if (!_uiState.value.effectiveRole.canSell()) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "صلاحية الكاشير لتحديث المنتجات ولا تشمل البيع" else "Cashier role cannot perform sales")
+            }
+            return false
+        }
         val trimmed = code.trim()
         val match = _uiState.value.products.firstOrNull {
             it.product.barcode.equals(trimmed, ignoreCase = true) ||
@@ -432,6 +471,12 @@ class StoreViewModel(
 
     fun addToCart(item: ProductWithStock) {
         touchActivity()
+        if (!_uiState.value.effectiveRole.canSell()) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "صلاحية الكاشير لتحديث المنتجات ولا تشمل البيع" else "Cashier role cannot perform sales")
+            }
+            return
+        }
         if (item.currentStock <= 0) {
             _uiState.update {
                 it.copy(statusMessage = if (it.language == AppLanguage.AR) "المنتج غير متوفر في المخزون" else "Product out of stock")
@@ -501,6 +546,12 @@ class StoreViewModel(
     fun checkoutCart() {
         touchActivity()
         val state = _uiState.value
+        if (!state.effectiveRole.canSell()) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "صلاحية الكاشير لتحديث المنتجات ولا تشمل البيع" else "Cashier role cannot perform sales")
+            }
+            return
+        }
         val openDay = state.openBusinessDay ?: run {
             _uiState.update {
                 it.copy(statusMessage = if (it.language == AppLanguage.AR) "يجب فتح اليوم التجاري أولاً" else "Open business day first")
@@ -657,8 +708,9 @@ class StoreViewModel(
 
     fun returnInvoice(invoice: InvoiceEntity) {
         touchActivity()
-        if (invoice.status == "returned") return
         val state = _uiState.value
+        if (!state.effectiveRole.canSell()) return
+        if (invoice.status == "returned") return
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val updated = invoice.copy(status = "returned", updatedAtMillis = now, syncStatus = "PENDING")
@@ -738,10 +790,9 @@ class StoreViewModel(
     fun saveProduct(product: ProductEntity, initialStockIfNew: Int = 0) {
         touchActivity()
         val state = _uiState.value
-        if (!state.effectiveRole.canManageCatalog()) return
-        if (!state.isOnline) {
+        if (!state.effectiveRole.canUpdateProducts()) {
             _uiState.update {
-                it.copy(statusMessage = if (it.language == AppLanguage.AR) "تحديث الكتالوج والأسعار يتطلب اتصالاً بالإنترنت" else "Catalog & price updates require internet connection")
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "صلاحية البائع لا تشمل تعديل المنتجات" else "Sellers cannot update products")
             }
             return
         }
@@ -749,7 +800,9 @@ class StoreViewModel(
             val isNew = product.id.isBlank()
             val id = product.id.ifBlank { "prod_${UUID.randomUUID().toString().replace("-", "").take(16)}" }
             val entity = product.copy(id = id, updatedAtMillis = System.currentTimeMillis())
-            val res = if (remote.isCloudAuthenticated()) {
+            dao.upsertProduct(entity)
+
+            if (state.isOnline && remote.isCloudAuthenticated()) {
                 val members = remote.getMemberUids(state.storeId)
                 remote.upsertProduct(
                     state.storeId,
@@ -773,68 +826,79 @@ class StoreViewModel(
                     members
                 )
             } else {
-                Result.success(Unit)
-            }
-            if (res.isSuccess) {
-                dao.upsertProduct(entity)
-                if (isNew && initialStockIfNew > 0) {
-                    val movId = "mov_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-                    val mov = StockMovementEntity(
-                        id = movId,
-                        productId = id,
-                        type = "opening",
-                        qtyDelta = initialStockIfNew,
-                        unitCost = entity.costPrice,
-                        reason = "Initial stock",
-                        actorUid = currentUserId,
-                        actorName = state.userName,
-                        syncStatus = if (remote.isCloudAuthenticated()) "SYNCED" else "PENDING"
-                    )
-                    dao.insertMovement(mov)
-                    if (remote.isCloudAuthenticated()) {
-                        val members = remote.getMemberUids(state.storeId)
-                        remote.createMovement(
-                            state.storeId,
-                            FsStockMovement(
-                                id = movId,
-                                productId = id,
-                                type = "opening",
-                                qtyDelta = initialStockIfNew,
-                                unitCost = entity.costPrice,
-                                reason = "Initial stock",
-                                actorUid = currentUserId,
-                                actorName = state.userName
-                            ),
-                            members
-                        )
+                syncEngine.enqueueOperation(
+                    "products",
+                    entity.id,
+                    "UPSERT",
+                    JSONObject().apply {
+                        put("nameAr", entity.nameAr)
+                        put("nameEn", entity.nameEn)
+                        put("category", entity.category)
+                        put("sku", entity.sku)
+                        put("barcode", entity.barcode)
+                        put("imageUri", entity.imageUri)
+                        put("costPrice", entity.costPrice)
+                        put("retailPrice", entity.retailPrice)
+                        put("wholesalePrice", entity.wholesalePrice)
+                        put("wholesaleMinQty", entity.wholesaleMinQty)
+                        put("unitAr", entity.unitAr)
+                        put("unitEn", entity.unitEn)
+                        put("lowStockThreshold", entity.lowStockThreshold)
+                        put("isDeleted", entity.isDeleted)
                     }
-                }
-                recordAuditLog(
-                    if (isNew) "CREATE_PRODUCT" else "UPDATE_PRODUCT",
-                    "product",
-                    id,
-                    "${entity.nameEn} | Retail: ${entity.retailPrice}, Wholesale: ${entity.wholesalePrice}"
                 )
-            } else {
-                _uiState.update { it.copy(statusMessage = res.exceptionOrNull()?.localizedMessage) }
             }
+
+            if (isNew && initialStockIfNew > 0) {
+                val movId = "mov_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+                val mov = StockMovementEntity(
+                    id = movId,
+                    productId = id,
+                    type = "opening",
+                    qtyDelta = initialStockIfNew,
+                    unitCost = entity.costPrice,
+                    reason = "Initial stock",
+                    actorUid = currentUserId,
+                    actorName = state.userName,
+                    syncStatus = "PENDING"
+                )
+                dao.insertMovement(mov)
+                syncEngine.enqueueOperation(
+                    "movements",
+                    movId,
+                    "UPSERT",
+                    JSONObject().apply {
+                        put("productId", mov.productId)
+                        put("type", mov.type)
+                        put("qtyDelta", mov.qtyDelta)
+                        put("unitCost", mov.unitCost)
+                        put("reason", mov.reason)
+                        put("refId", "")
+                        put("actorUid", mov.actorUid)
+                        put("actorName", mov.actorName)
+                    }
+                )
+                if (state.isOnline && remote.isCloudAuthenticated()) {
+                    syncEngine.flushPendingOps(state.storeId)
+                }
+            }
+            recordAuditLog(
+                if (isNew) "CREATE_PRODUCT" else "UPDATE_PRODUCT",
+                "product",
+                id,
+                "${entity.nameEn} | Retail: ${entity.retailPrice}, Wholesale: ${entity.wholesalePrice}"
+            )
         }
     }
 
     fun deleteProduct(product: ProductEntity) {
         touchActivity()
         val state = _uiState.value
-        if (!state.effectiveRole.canManageCatalog()) return
-        if (!state.isOnline) {
-            _uiState.update {
-                it.copy(statusMessage = if (it.language == AppLanguage.AR) "حذف المنتجات يتطلب اتصالاً بالإنترنت" else "Product deletion requires internet connection")
-            }
-            return
-        }
+        if (!state.effectiveRole.canDeleteCatalog()) return
         viewModelScope.launch {
             val softDeleted = product.copy(isDeleted = true, updatedAtMillis = System.currentTimeMillis())
             dao.upsertProduct(softDeleted)
-            if (remote.isCloudAuthenticated()) {
+            if (state.isOnline && remote.isCloudAuthenticated()) {
                 remote.deleteProduct(state.storeId, product.id)
             }
             recordAuditLog("DELETE_PRODUCT", "product", product.id, product.nameEn)
@@ -845,6 +909,7 @@ class StoreViewModel(
         touchActivity()
         if (qty <= 0) return
         val state = _uiState.value
+        if (!state.effectiveRole.canUpdateProducts()) return
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val movId = "mov_${UUID.randomUUID().toString().replace("-", "").take(16)}"
@@ -1063,27 +1128,189 @@ class StoreViewModel(
     }
 
     // --- ADMIN & TEAM ---
-    fun addOrUpdateMember(uid: String, displayName: String, role: UserRole) {
-        touchActivity()
-        val state = _uiState.value
-        if (!state.effectiveRole.canManageUsers()) return
-        if (role == UserRole.ADMIN && state.effectiveRole != UserRole.ADMIN) return
-        val cleanUid = uid.trim()
-        if (cleanUid.isBlank() || displayName.isBlank()) return
+    private fun notAllowedMessage(lang: AppLanguage): String =
+        if (lang == AppLanguage.AR) "غير مسموح" else "Not allowed"
 
+    private fun lastAdminProtectedMessage(lang: AppLanguage): String =
+        if (lang == AppLanguage.AR) "لا يمكن حذف أو تخفيض آخر مسؤول نشط" else "Cannot delete, deactivate, or demote the last remaining admin"
+
+    fun addOrUpdateMember(
+        uid: String,
+        username: String,
+        displayName: String,
+        password: String,
+        role: UserRole,
+        active: Boolean = true
+    ) {
+        touchActivity()
         viewModelScope.launch {
-            val entity = StoreMemberEntity(uid = cleanUid, displayName = displayName.trim(), role = role.key, active = true)
-            dao.upsertMember(entity)
-            if (state.isOnline && remote.isCloudAuthenticated()) {
-                val members = remote.getMemberUids(state.storeId)
-                remote.upsertMember(
-                    state.storeId,
-                    FsStoreMember(uid = cleanUid, displayName = entity.displayName, role = role.key, active = true),
-                    members
-                )
-            }
-            recordAuditLog("UPSERT_MEMBER", "member", cleanUid, "${entity.displayName} -> ${role.key}")
+            saveMemberEnforced(
+                actorRole = _uiState.value.effectiveRole,
+                uid = uid,
+                username = username,
+                displayName = displayName,
+                password = password,
+                role = role,
+                active = active
+            )
         }
+    }
+
+    internal suspend fun saveMemberEnforced(
+        actorRole: UserRole = _uiState.value.effectiveRole,
+        uid: String,
+        username: String,
+        displayName: String,
+        password: String,
+        role: UserRole,
+        active: Boolean = true
+    ): Result<StoreMemberEntity> {
+        val state = _uiState.value
+        if (!actorRole.canManageUsers()) {
+            _uiState.update { it.copy(statusMessage = notAllowedMessage(it.language)) }
+            return Result.failure(SecurityException("Not allowed"))
+        }
+
+        val cleanUsername = username.trim()
+        val cleanName = displayName.trim().ifBlank { cleanUsername }
+        if (cleanUsername.isBlank()) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "يرجى إدخال اسم المستخدم" else "Username is required")
+            }
+            return Result.failure(IllegalArgumentException("Username is required"))
+        }
+
+        val allMembers = dao.getMembersSnapshot()
+        val byUid = uid.trim().takeIf { it.isNotBlank() }?.let { targetUid ->
+            allMembers.find { it.uid == targetUid }
+        }
+        val byUsername = allMembers.find { it.username.equals(cleanUsername, ignoreCase = true) }
+
+        if (byUid != null && byUsername != null && byUid.uid != byUsername.uid) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "اسم المستخدم مستخدم بالفعل" else "Username is already in use")
+            }
+            return Result.failure(IllegalArgumentException("Username is already in use"))
+        }
+
+        val existing = byUid ?: byUsername
+        val existingRole = existing?.let { UserRole.fromKey(it.role) }
+
+        // Only an Admin can create, edit, deactivate, or demote an Admin account.
+        if ((role == UserRole.ADMIN || existingRole == UserRole.ADMIN) && actorRole != UserRole.ADMIN) {
+            _uiState.update { it.copy(statusMessage = notAllowedMessage(it.language)) }
+            return Result.failure(SecurityException("Not allowed"))
+        }
+
+        // Block demoting or deactivating the last remaining active Admin.
+        if (existing != null && existingRole == UserRole.ADMIN && (role != UserRole.ADMIN || !active)) {
+            val remainingActiveAdmins = allMembers.count {
+                UserRole.fromKey(it.role) == UserRole.ADMIN && it.active && it.uid != existing.uid
+            }
+            if (remainingActiveAdmins == 0) {
+                _uiState.update { it.copy(statusMessage = lastAdminProtectedMessage(it.language)) }
+                return Result.failure(IllegalStateException("Cannot demote or deactivate the last remaining admin"))
+            }
+        }
+
+        val passwordHash = if (password.isNotEmpty()) {
+            PreferencesManager.sha256(password)
+        } else {
+            existing?.passwordHash.orEmpty()
+        }
+        if (passwordHash.isBlank()) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "يرجى تعيين كلمة مرور للمستخدم الجديد" else "Password is required for a new user")
+            }
+            return Result.failure(IllegalArgumentException("Password is required for a new user"))
+        }
+
+        val resolvedUid = existing?.uid ?: uid.trim().ifBlank {
+            "staff_${cleanUsername.lowercase().replace(Regex("[^a-z0-9]"), "").ifBlank { "user" }}_${UUID.randomUUID().toString().take(6)}"
+        }
+        val now = System.currentTimeMillis()
+        val entity = StoreMemberEntity(
+            uid = resolvedUid,
+            username = cleanUsername,
+            passwordHash = passwordHash,
+            displayName = cleanName,
+            role = role.key,
+            active = active,
+            createdAtMillis = existing?.createdAtMillis ?: now,
+            updatedAtMillis = now
+        )
+        dao.upsertMember(entity)
+        if (state.isOnline && remote.isCloudAuthenticated()) {
+            val members = remote.getMemberUids(state.storeId)
+            remote.upsertMember(
+                state.storeId,
+                FsStoreMember(uid = resolvedUid, displayName = entity.displayName, role = role.key, active = active),
+                members
+            )
+        }
+        recordAuditLog("UPSERT_MEMBER", "member", resolvedUid, "${entity.username} (${entity.displayName}) -> ${role.key}")
+        _uiState.update {
+            it.copy(statusMessage = if (it.language == AppLanguage.AR) "تم حفظ المستخدم وكلمة المرور بنجاح" else "User and password saved successfully")
+        }
+        return Result.success(entity)
+    }
+
+    fun deleteMember(targetUid: String) {
+        touchActivity()
+        viewModelScope.launch {
+            deleteMemberEnforced(actorRole = _uiState.value.effectiveRole, targetUid = targetUid)
+        }
+    }
+
+    internal suspend fun deleteMemberEnforced(
+        actorRole: UserRole = _uiState.value.effectiveRole,
+        targetUid: String
+    ): Result<Unit> {
+        val state = _uiState.value
+        if (!actorRole.canManageUsers()) {
+            _uiState.update { it.copy(statusMessage = notAllowedMessage(it.language)) }
+            return Result.failure(SecurityException("Not allowed"))
+        }
+
+        val cleanUid = targetUid.trim()
+        val allMembers = dao.getMembersSnapshot()
+        val target = allMembers.find { it.uid == cleanUid }
+        if (target == null) {
+            _uiState.update {
+                it.copy(statusMessage = if (it.language == AppLanguage.AR) "المستخدم غير موجود" else "User not found")
+            }
+            return Result.failure(NoSuchElementException("User not found"))
+        }
+
+        val targetRole = UserRole.fromKey(target.role)
+        if (targetRole == UserRole.ADMIN && actorRole != UserRole.ADMIN) {
+            _uiState.update { it.copy(statusMessage = notAllowedMessage(it.language)) }
+            return Result.failure(SecurityException("Not allowed"))
+        }
+
+        if (targetRole == UserRole.ADMIN) {
+            val remainingActiveAdmins = allMembers.count {
+                UserRole.fromKey(it.role) == UserRole.ADMIN && it.active && it.uid != target.uid
+            }
+            val remainingTotalAdmins = allMembers.count {
+                UserRole.fromKey(it.role) == UserRole.ADMIN && it.uid != target.uid
+            }
+            if (remainingActiveAdmins == 0 || remainingTotalAdmins == 0) {
+                _uiState.update { it.copy(statusMessage = lastAdminProtectedMessage(it.language)) }
+                return Result.failure(IllegalStateException("Cannot delete the last remaining admin"))
+            }
+        }
+
+        dao.deleteMemberByUid(target.uid)
+        if (state.isOnline && remote.isCloudAuthenticated()) {
+            val members = remote.getMemberUids(state.storeId)
+            remote.deleteMember(state.storeId, target.uid, members)
+        }
+        recordAuditLog("DELETE_MEMBER", "member", target.uid, "${target.username} (${target.role})")
+        _uiState.update {
+            it.copy(statusMessage = if (it.language == AppLanguage.AR) "تم حذف المستخدم بنجاح" else "User deleted successfully")
+        }
+        return Result.success(Unit)
     }
 
     fun saveSettings(updated: StoreSettingsEntity) {

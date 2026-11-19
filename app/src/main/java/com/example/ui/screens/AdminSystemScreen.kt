@@ -16,14 +16,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -31,18 +40,23 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.example.data.local.StoreMemberEntity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.BuildConfig
 import com.example.i18n.AppLanguage
@@ -104,9 +118,58 @@ fun AdminSystemScreen(
 @Composable
 private fun UsersAndRolesTab(state: StoreUiState, viewModel: StoreViewModel) {
     val strings = LocalStoreStrings.current
-    var uidInput by remember { mutableStateOf("") }
+    var editingUid by remember { mutableStateOf("") }
+    var isEditingExisting by remember { mutableStateOf(false) }
+    var usernameInput by remember { mutableStateOf("") }
     var nameInput by remember { mutableStateOf("") }
-    var roleInput by remember { mutableStateOf(UserRole.CASHIER) }
+    var passwordInput by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var roleInput by remember { mutableStateOf(UserRole.SELLER) }
+    var activeInput by remember { mutableStateOf(true) }
+    var memberToDelete by remember { mutableStateOf<StoreMemberEntity?>(null) }
+
+    LaunchedEffect(state.effectiveRole) {
+        if (state.effectiveRole != UserRole.ADMIN && roleInput == UserRole.ADMIN) {
+            roleInput = UserRole.SELLER
+        }
+        if (isEditingExisting && state.effectiveRole != UserRole.ADMIN) {
+            val target = state.members.find { it.uid == editingUid }
+            if (target != null && UserRole.fromKey(target.role) == UserRole.ADMIN) {
+                isEditingExisting = false
+                editingUid = ""
+                usernameInput = ""
+                nameInput = ""
+                passwordInput = ""
+                roleInput = UserRole.SELLER
+                activeInput = true
+            }
+        }
+    }
+
+    val activeAdminCount = remember(state.members) {
+        state.members.count { UserRole.fromKey(it.role) == UserRole.ADMIN && it.active }
+    }
+    val totalAdminCount = remember(state.members) {
+        state.members.count { UserRole.fromKey(it.role) == UserRole.ADMIN }
+    }
+    val isEditingLastActiveAdmin = remember(isEditingExisting, editingUid, state.members, activeAdminCount) {
+        if (!isEditingExisting) false
+        else {
+            val target = state.members.find { it.uid == editingUid }
+            target != null && UserRole.fromKey(target.role) == UserRole.ADMIN && target.active && activeAdminCount <= 1
+        }
+    }
+
+    val availableRoles = remember(state.effectiveRole, strings) {
+        buildList {
+            if (state.effectiveRole == UserRole.ADMIN) {
+                add(UserRole.ADMIN to strings.roleAdmin)
+            }
+            add(UserRole.MANAGER to strings.roleManager)
+            add(UserRole.CASHIER to strings.roleCashier)
+            add(UserRole.SELLER to strings.roleSeller)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -117,16 +180,19 @@ private fun UsersAndRolesTab(state: StoreUiState, viewModel: StoreViewModel) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(strings.previewRoleLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                null to strings.roleAdmin,
-                                UserRole.MANAGER to strings.roleManager,
-                                UserRole.CASHIER to strings.roleCashier
-                            ).forEach { (r, label) ->
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(
+                                listOf(
+                                    null to strings.roleAdmin,
+                                    UserRole.MANAGER to strings.roleManager,
+                                    UserRole.CASHIER to strings.roleCashier,
+                                    UserRole.SELLER to strings.roleSeller
+                                )
+                            ) { (r, label) ->
                                 FilterChip(
                                     selected = state.previewRole == r,
                                     onClick = { viewModel.setPreviewRole(r) },
-                                    label = { Text(label) }
+                                    label = { Text(label, maxLines = 1) }
                                 )
                             }
                         }
@@ -138,46 +204,207 @@ private fun UsersAndRolesTab(state: StoreUiState, viewModel: StoreViewModel) {
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(strings.addMember, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    OutlinedTextField(value = uidInput, onValueChange = { uidInput = it }, label = { Text(strings.memberUidLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = nameInput, onValueChange = { nameInput = it }, label = { Text(strings.memberNameLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(UserRole.MANAGER to strings.roleManager, UserRole.CASHIER to strings.roleCashier).forEach { (r, label) ->
-                            FilterChip(selected = roleInput == r, onClick = { roleInput = r }, label = { Text(label) })
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (isEditingExisting) "${strings.editMember}: $usernameInput" else strings.addMember,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (isEditingExisting) {
+                            TextButton(onClick = {
+                                isEditingExisting = false
+                                editingUid = ""
+                                usernameInput = ""
+                                nameInput = ""
+                                passwordInput = ""
+                                roleInput = UserRole.SELLER
+                                activeInput = true
+                            }) {
+                                Text(strings.cancelLabel)
+                            }
                         }
                     }
+
+                    OutlinedTextField(
+                        value = usernameInput,
+                        onValueChange = { usernameInput = it },
+                        label = { Text(strings.usernameLabel) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("member_username_input")
+                    )
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text(strings.memberNameLabel) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("member_displayname_input")
+                    )
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text(strings.passwordLabel) },
+                        placeholder = if (isEditingExisting) {
+                            { Text(strings.newPasswordHint) }
+                        } else null,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = strings.passwordLabel
+                                )
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("member_password_input")
+                    )
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(availableRoles) { (r, label) ->
+                            FilterChip(
+                                selected = roleInput == r,
+                                enabled = !(isEditingLastActiveAdmin && r != UserRole.ADMIN),
+                                onClick = { roleInput = r },
+                                label = { Text(label, maxLines = 1) },
+                                modifier = Modifier.testTag("member_role_${r.key}")
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(strings.activeUserLabel, style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = activeInput,
+                            enabled = !isEditingLastActiveAdmin,
+                            onCheckedChange = { activeInput = it }
+                        )
+                    }
+
                     Button(
                         onClick = {
-                            viewModel.addOrUpdateMember(uidInput, nameInput, roleInput)
-                            uidInput = ""
+                            viewModel.addOrUpdateMember(
+                                uid = editingUid,
+                                username = usernameInput,
+                                displayName = nameInput,
+                                password = passwordInput,
+                                role = roleInput,
+                                active = activeInput
+                            )
+                            isEditingExisting = false
+                            editingUid = ""
+                            usernameInput = ""
                             nameInput = ""
+                            passwordInput = ""
+                            roleInput = UserRole.SELLER
+                            activeInput = true
                         },
-                        enabled = uidInput.isNotBlank() && nameInput.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth()
+                        enabled = usernameInput.isNotBlank() &&
+                            nameInput.isNotBlank() &&
+                            (isEditingExisting || passwordInput.isNotBlank()),
+                        modifier = Modifier.fillMaxWidth().testTag("save_member_button")
                     ) { Text(strings.saveLabel) }
                 }
             }
         }
 
         items(state.members, key = { it.uid }) { m ->
+            val memberRole = UserRole.fromKey(m.role)
+            val canManageThisMember = state.effectiveRole == UserRole.ADMIN || memberRole != UserRole.ADMIN
+            val isLastProtectedAdmin = memberRole == UserRole.ADMIN && ((m.active && activeAdminCount <= 1) || totalAdminCount <= 1)
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(m.displayName, style = MaterialTheme.typography.titleMedium)
-                        Text(m.uid, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "@${m.username.ifBlank { m.uid }} • ${if (m.active) "✓" else "✕"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    StatusBadge(
-                        label = m.role.uppercase(),
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        StatusBadge(
+                            label = m.role.uppercase(),
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        if (canManageThisMember) {
+                            IconButton(
+                                onClick = {
+                                    isEditingExisting = true
+                                    editingUid = m.uid
+                                    usernameInput = m.username.ifBlank { m.displayName }
+                                    nameInput = m.displayName
+                                    passwordInput = ""
+                                    roleInput = memberRole
+                                    activeInput = m.active
+                                },
+                                modifier = Modifier.testTag("edit_member_${m.uid}")
+                            ) {
+                                Icon(Icons.Filled.Edit, contentDescription = strings.editMember)
+                            }
+                            if (!isLastProtectedAdmin) {
+                                IconButton(
+                                    onClick = { memberToDelete = m },
+                                    modifier = Modifier.testTag("delete_member_${m.uid}")
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        contentDescription = strings.deleteMember,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    val pendingDelete = memberToDelete
+    if (pendingDelete != null) {
+        AlertDialog(
+            onDismissRequest = { memberToDelete = null },
+            title = { Text(strings.confirmDeleteTitle) },
+            text = { Text("${strings.confirmDeleteMsg}\n\n${pendingDelete.displayName} (@${pendingDelete.username.ifBlank { pendingDelete.uid }})") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteMember(pendingDelete.uid)
+                        if (isEditingExisting && editingUid == pendingDelete.uid) {
+                            isEditingExisting = false
+                            editingUid = ""
+                            usernameInput = ""
+                            nameInput = ""
+                            passwordInput = ""
+                            roleInput = UserRole.SELLER
+                            activeInput = true
+                        }
+                        memberToDelete = null
+                    },
+                    modifier = Modifier.testTag("confirm_delete_member_button")
+                ) { Text(strings.confirmLabel) }
+            },
+            dismissButton = {
+                TextButton(onClick = { memberToDelete = null }) { Text(strings.cancelLabel) }
+            }
+        )
     }
 }
 
@@ -303,7 +530,7 @@ private fun StoreCustomizationTab(
             ToggleRow(strings.notifyNewVersion, nNewVer) { nNewVer = it }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("admin" to strings.roleAdmin, "manager" to strings.roleManager, "cashier" to strings.roleCashier).forEach { (key, lbl) ->
+                listOf("admin" to strings.roleAdmin, "manager" to strings.roleManager, "cashier" to strings.roleCashier, "seller" to strings.roleSeller).forEach { (key, lbl) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = key in rolesSet,

@@ -1,0 +1,58 @@
+{
+  "name": "omini-pos-pc",
+  "version": "1.0.0",
+  "description": "Omini POS Desktop (Offline-First Store Suite for Windows & LAN/Cloud Sync with Android)",
+  "main": "src/electron/main.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "electron": "electron .",
+    "build:win": "electron-builder --win nsis",
+    "prepare:download-folder": "node scripts/build-download-folder.js",
+    "test": "node --test test/pc-store.test.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "firebase": "^11.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aistudio.ominipos.pc",
+    "productName": "Omini POS",
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "artifactName": "Omini-POS-Setup-${version}.exe",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Omini POS",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

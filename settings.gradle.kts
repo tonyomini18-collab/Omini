@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Aroma POS"
+rootProject.name = "Omini POS"
 
 include(":app")
