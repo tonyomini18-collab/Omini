@@ -306,4 +306,81 @@ class ExampleRobolectricTest {
       db.close()
     }
   }
+
+  @Test
+  fun usdPaymentMethod_checkoutRecordsUsdAndUpdatesTotals() = runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    if (com.google.firebase.FirebaseApp.getApps(context).isEmpty()) {
+      com.google.firebase.FirebaseApp.initializeApp(
+        context,
+        com.google.firebase.FirebaseOptions.Builder()
+          .setProjectId("test-project")
+          .setApplicationId("1:123456:android:abcdef")
+          .setApiKey("test-api-key")
+          .build()
+      )
+    }
+
+    val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+      .allowMainThreadQueries()
+      .build()
+    try {
+      val dao = db.storeDao()
+      val prefs = PreferencesManager(context)
+      prefs.setLanguage("en")
+      val connectivity = com.example.data.sync.ConnectivityObserver(context)
+      val remote = com.example.data.remote.FirestoreRepository(context)
+      val syncEngine = com.example.data.sync.SyncEngine(dao, remote, connectivity, prefs)
+
+      val vm = com.example.ui.viewmodel.StoreViewModel(
+        dao = dao,
+        remote = remote,
+        syncEngine = syncEngine,
+        connectivity = connectivity,
+        prefs = prefs,
+        currentUserId = PreferencesManager.DEFAULT_ADMIN_UID,
+        currentUserDisplayName = "omini",
+        currentUserEmail = null,
+        initialRoleKey = "admin"
+      )
+
+      val deadline = System.currentTimeMillis() + 5_000L
+      while ((vm.uiState.value.isLoading || vm.uiState.value.products.isEmpty()) &&
+        System.currentTimeMillis() < deadline
+      ) {
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        Thread.sleep(20)
+      }
+      org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+      vm.openBusinessDay(0.0)
+      val dayDeadline = System.currentTimeMillis() + 3_000L
+      while (vm.uiState.value.openBusinessDay == null && System.currentTimeMillis() < dayDeadline) {
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        Thread.sleep(20)
+      }
+      assertNotNull(vm.uiState.value.openBusinessDay)
+
+      val firstProduct = vm.uiState.value.products.first()
+      vm.addToCart(firstProduct)
+      vm.setPaymentMethod("usd")
+      vm.setUsdRateSsp(1000.0)
+      assertEquals("usd", vm.uiState.value.selectedPaymentMethod)
+      assertEquals(1000.0, vm.uiState.value.usdRateSsp, 0.01)
+
+      vm.checkoutCart()
+      val invDeadline = System.currentTimeMillis() + 3_000L
+      while (vm.uiState.value.lastCompletedInvoice == null && System.currentTimeMillis() < invDeadline) {
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        Thread.sleep(20)
+      }
+
+      val invoice = vm.uiState.value.lastCompletedInvoice
+      assertNotNull(invoice)
+      assertEquals("usd", invoice?.paymentMethod)
+      assertTrue(invoice?.itemsSummary?.contains("USD") == true)
+    } finally {
+      db.close()
+    }
+  }
 }

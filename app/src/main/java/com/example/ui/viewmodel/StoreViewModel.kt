@@ -146,6 +146,13 @@ class StoreViewModel(
             }
         }
         viewModelScope.launch {
+            prefs.usdRateSspFlow.collect { rate ->
+                if (rate > 0.0) {
+                    _uiState.update { it.copy(usdRateSsp = rate) }
+                }
+            }
+        }
+        viewModelScope.launch {
             connectivity.isOnline.collect { online ->
                 _uiState.update { it.copy(isOnline = online) }
                 val storeId = _uiState.value.storeId
@@ -531,7 +538,19 @@ class StoreViewModel(
 
     fun setPaymentMethod(method: String) {
         touchActivity()
-        _uiState.update { it.copy(selectedPaymentMethod = method) }
+        val normalized = method.lowercase().trim()
+        if (normalized in setOf("cash", "transfer", "credit", "usd")) {
+            _uiState.update { it.copy(selectedPaymentMethod = normalized) }
+        }
+    }
+
+    fun setUsdRateSsp(rate: Double) {
+        touchActivity()
+        if (rate <= 0.0) return
+        _uiState.update { it.copy(usdRateSsp = rate) }
+        viewModelScope.launch {
+            prefs.setUsdRateSsp(rate)
+        }
     }
 
     fun setSelectedCustomer(customerId: String?) {
@@ -589,6 +608,16 @@ class StoreViewModel(
                 val label = if (state.language == AppLanguage.AR) item.product.nameAr else item.product.nameEn
                 val tier = if (item.useWholesalePrice) "W" else "R"
                 "$label x${item.quantity} ($tier) = ${String.format(Locale.US, "%.2f", item.lineTotal)}"
+            }.toMutableList()
+            if (state.selectedPaymentMethod == "usd") {
+                val rate = state.usdRateSsp.takeIf { it > 0.0 } ?: 1300.0
+                val usdAmount = total / rate
+                val usdLine = if (state.language == AppLanguage.AR) {
+                    "الدفع بالدولار: $${String.format(Locale.US, "%.2f", usdAmount)} USD (1 USD = ${String.format(Locale.US, "%.2f", rate)} SSP)"
+                } else {
+                    "Paid in USD: $${String.format(Locale.US, "%.2f", usdAmount)} USD (1 USD = ${String.format(Locale.US, "%.2f", rate)} SSP)"
+                }
+                summaryLines.add(usdLine)
             }
 
             val customer = state.customers.find { it.id == state.selectedCustomerId }

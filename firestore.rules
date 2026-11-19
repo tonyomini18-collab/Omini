@@ -157,7 +157,7 @@ service cloud.firestore {
              data.discount is number && data.discount >= 0 &&
              data.total is number && data.total >= 0 &&
              data.costTotal is number && data.costTotal >= 0 &&
-             data.paymentMethod in ['cash', 'transfer', 'credit'] &&
+             data.paymentMethod in ['cash', 'transfer', 'credit', 'usd'] &&
              data.status in ['completed', 'returned'] &&
              data.businessDayId is string && data.businessDayId.size() >= 1 && data.businessDayId.size() <= 64 &&
              data.cashierUid is string && data.cashierUid.size() >= 1 && data.cashierUid.size() <= 128 &&

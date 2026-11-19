@@ -7,6 +7,9 @@
   let pcVersion = "1.0.0";
   let activeTab = "pos";
   let cart = [];
+  let selectedPayMethod = "cash";
+  let posDiscount = 0;
+  let posUsdRate = null;
   let searchQuery = "";
   let categoryFilter = "all";
   let periodFilter = "month";
@@ -144,6 +147,9 @@
       return catOk && textOk;
     });
     const subtotal = cart.reduce((acc, c) => acc + c.qty * (c.wholesale ? c.product.wholesalePrice : c.product.retailPrice), 0);
+    const total = Math.max(0, subtotal - Number(posDiscount || 0));
+    const effectiveUsdRate = Number(posUsdRate || (state.settings && state.settings.usdRateSsp) || 1300);
+    const totalUsd = effectiveUsdRate > 0 ? total / effectiveUsdRate : 0;
     const customers = (state.parties || []).filter((p) => p.partyType === "customer");
 
     root.innerHTML = `
@@ -202,14 +208,27 @@
                     .join("")
             }
             <div class="between"><span>${s.subtotal}</span><strong class="mono">${formatMoney(subtotal)}</strong></div>
-            <label>${s.discount}<input id="posDiscount" type="number" min="0" value="0" /></label>
+            <label>${s.discount}<input id="posDiscount" type="number" min="0" value="${posDiscount}" /></label>
+            <div class="between"><span>${s.total}</span><strong id="posTotalSsp" class="mono">${formatMoney(total)}</strong></div>
             <label>${s.paymentMethod}
               <select id="posPay">
-                <option value="cash">${s.cash}</option>
-                <option value="transfer">${s.transfer}</option>
-                <option value="credit">${s.credit}</option>
+                <option value="cash" ${selectedPayMethod === "cash" ? "selected" : ""}>${s.cash}</option>
+                <option value="transfer" ${selectedPayMethod === "transfer" ? "selected" : ""}>${s.transfer}</option>
+                <option value="credit" ${selectedPayMethod === "credit" ? "selected" : ""}>${s.credit}</option>
+                <option value="usd" ${selectedPayMethod === "usd" ? "selected" : ""}>${s.usd}</option>
               </select>
             </label>
+            ${
+              selectedPayMethod === "usd"
+                ? `<label>${s.usdRate}
+                     <input id="posUsdRate" type="number" min="1" step="any" value="${effectiveUsdRate}" />
+                   </label>
+                   <div class="between" style="color:var(--success);font-weight:700">
+                     <span>${s.totalInUsd}</span>
+                     <strong id="posTotalUsd" class="mono">$${totalUsd.toFixed(2)} USD</strong>
+                   </div>`
+                : ""
+            }
             <label>${s.customer}
               <select id="posCustomer">
                 <option value="">${s.walkIn}</option>
@@ -225,7 +244,7 @@
               .map(
                 (inv) => `
               <div class="between" style="font-size:13px">
-                <div><strong class="mono">${inv.invoiceNumber}</strong> — ${formatMoney(inv.total)} (${inv.status})</div>
+                <div><strong class="mono">${inv.invoiceNumber}</strong> — ${formatMoney(inv.total)}${inv.paymentMethod === "usd" && inv.usdAmount ? ` ($${Number(inv.usdAmount).toFixed(2)} USD)` : ` (${inv.paymentMethod})`} (${inv.status})</div>
                 ${inv.status === "completed" ? `<button class="btn" data-ret="${inv.id}">${s.returnBtn}</button>` : ""}
               </div>`
               )
@@ -289,6 +308,37 @@
         renderPos(root);
       };
     });
+    const posDiscountEl = document.getElementById("posDiscount");
+    if (posDiscountEl) {
+      posDiscountEl.oninput = (e) => {
+        posDiscount = Math.max(0, Number(e.target.value || 0));
+        const newTotal = Math.max(0, subtotal - posDiscount);
+        const totalEl = document.getElementById("posTotalSsp");
+        if (totalEl) totalEl.textContent = formatMoney(newTotal);
+        const usdEl = document.getElementById("posTotalUsd");
+        const r = Number(posUsdRate || (state.settings && state.settings.usdRateSsp) || 1300);
+        if (usdEl && r > 0) usdEl.textContent = `$${(newTotal / r).toFixed(2)} USD`;
+      };
+    }
+    const posPayEl = document.getElementById("posPay");
+    if (posPayEl) {
+      posPayEl.onchange = (e) => {
+        selectedPayMethod = e.target.value;
+        renderPos(root);
+      };
+    }
+    const posUsdRateEl = document.getElementById("posUsdRate");
+    if (posUsdRateEl) {
+      posUsdRateEl.oninput = (e) => {
+        const val = Number(e.target.value);
+        if (Number.isFinite(val) && val > 0) {
+          posUsdRate = val;
+          const newTotal = Math.max(0, subtotal - posDiscount);
+          const usdEl = document.getElementById("posTotalUsd");
+          if (usdEl) usdEl.textContent = `$${(newTotal / val).toFixed(2)} USD`;
+        }
+      };
+    }
     const checkoutBtn = document.getElementById("checkoutBtn");
     if (checkoutBtn) {
       checkoutBtn.onclick = async () => {
@@ -298,10 +348,12 @@
               items: cart.map((c) => ({ productId: c.product.id, qty: c.qty, wholesale: c.wholesale })),
               discount: Number(document.getElementById("posDiscount").value || 0),
               paymentMethod: document.getElementById("posPay").value,
+              usdRateSsp: selectedPayMethod === "usd" ? Number((document.getElementById("posUsdRate") || {}).value || effectiveUsdRate) : null,
               customerId: document.getElementById("posCustomer").value
             }
           });
           cart = [];
+          posDiscount = 0;
           notifyElectronPosActivity();
           window.print();
         } catch (err) {
@@ -480,6 +532,11 @@
     const s = t();
     const open = state.openBusinessDay;
     const canOverride = currentUser.role === "admin" || currentUser.role === "manager";
+    const openUsdSales = open
+      ? (state.invoices || [])
+          .filter((i) => i.businessDayId === open.id && i.status === "completed" && i.paymentMethod === "usd")
+          .reduce((acc, i) => acc + Number(i.total || 0), 0)
+      : 0;
     root.innerHTML = `
       <div class="stack">
         <div class="card stack">
@@ -487,6 +544,12 @@
           ${
             open
               ? `<p>${open.dateStr} — <strong>${formatMoney(open.totalSales)}</strong> (${open.itemsSoldCount})</p>
+                 <div class="row" style="flex-wrap:wrap;font-size:13px;color:var(--muted)">
+                   <span>${s.cash}: <strong class="mono">${formatMoney(open.cashSales)}</strong></span>
+                   <span>${s.transfer}: <strong class="mono">${formatMoney(open.transferSales)}</strong></span>
+                   <span>${s.credit}: <strong class="mono">${formatMoney(open.creditSales)}</strong></span>
+                   <span>${s.usdSales}: <strong class="mono">${formatMoney(openUsdSales)}</strong></span>
+                 </div>
                  <button id="closeDayBtn" class="btn btn-danger">${s.closeDay}</button>`
               : `<div class="row">
                    <input id="openCashInput" type="number" value="0" placeholder="${s.openingCash}" style="max-width:220px" />
@@ -669,12 +732,13 @@
         </div>
         ${
           currentUser.role === "admin"
-            ? `<form id="themeForm" class="card row">
+            ? `<form id="themeForm" class="card row" style="flex-wrap:wrap">
                  <strong>${s.storeTheme}</strong>
                  <input id="setAr" value="${st.storeNameAr}" />
                  <input id="setEn" value="${st.storeNameEn}" />
                  <input id="setPri" type="color" value="${st.primaryColorHex}" style="max-width:64px;padding:2px" />
                  <input id="setSec" type="color" value="${st.secondaryColorHex}" style="max-width:64px;padding:2px" />
+                 <input id="setUsdRate" type="number" min="1" step="any" value="${st.usdRateSsp || 1300}" title="${s.usdRate}" style="max-width:130px" />
                  <button class="btn btn-primary" type="submit">${s.save}</button>
                </form>
                <form id="relForm" class="card row">
@@ -747,12 +811,15 @@
     if (themeForm) {
       themeForm.onsubmit = (e) => {
         e.preventDefault();
+        const usdRateVal = Number(document.getElementById("setUsdRate").value || 1300);
+        if (Number.isFinite(usdRateVal) && usdRateVal > 0) posUsdRate = usdRateVal;
         apiAction("SAVE_SETTINGS", {
           settings: {
             storeNameAr: document.getElementById("setAr").value,
             storeNameEn: document.getElementById("setEn").value,
             primaryColorHex: document.getElementById("setPri").value,
-            secondaryColorHex: document.getElementById("setSec").value
+            secondaryColorHex: document.getElementById("setSec").value,
+            usdRateSsp: Number.isFinite(usdRateVal) && usdRateVal > 0 ? usdRateVal : 1300
           }
         });
       };

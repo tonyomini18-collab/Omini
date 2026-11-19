@@ -309,3 +309,22 @@ test("LAN sync server connects with Android snapshot and merges prices, sales, a
     await handle.close();
   }
 });
+
+test("USD payment option records usd method, usdAmount, usdRateSsp, and keeps SSP day totals", () => {
+  const engine = new PcStoreEngine(tmpStoreFile());
+  const admin = engine.authenticateLocal("omini", "admin116");
+  engine.openBusinessDay(admin, { openingCash: 0 });
+
+  const inv = engine.completeSale(admin, {
+    items: [{ productId: "seed_white_musk", qty: 2, wholesale: false }],
+    discount: 0,
+    paymentMethod: "usd",
+    usdRateSsp: 1450
+  });
+  assert.equal(inv.paymentMethod, "usd");
+  assert.equal(inv.total, 290);
+  assert.equal(inv.usdRateSsp, 1450);
+  assert.equal(inv.usdAmount, Number((290 / 1450).toFixed(2)));
+  assert.ok(inv.itemsSummary.includes("USD"));
+  assert.equal(engine.getOpenBusinessDay().totalSales, 290);
+});

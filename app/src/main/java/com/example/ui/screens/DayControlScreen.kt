@@ -158,11 +158,15 @@ fun DayControlScreen(
                             fontWeight = FontWeight.Bold
                         )
                         HorizontalDivider()
+                        val usdSales = state.invoices
+                            .filter { it.businessDayId == summaryDay.id && it.status == "completed" && it.paymentMethod == "usd" }
+                            .sumOf { it.total }
                         SummaryRow(strings.openingCashLabel, "${String.format(Locale.US, "%.2f", summaryDay.openingCash)} ${strings.currencyCode}")
                         SummaryRow(strings.totalSalesLabel, "${String.format(Locale.US, "%.2f", summaryDay.totalSales)} ${strings.currencyCode}")
                         SummaryRow(strings.cashSalesLabel, "${String.format(Locale.US, "%.2f", summaryDay.cashSales)} ${strings.currencyCode}")
                         SummaryRow(strings.transferSalesLabel, "${String.format(Locale.US, "%.2f", summaryDay.transferSales)} ${strings.currencyCode}")
                         SummaryRow(strings.creditSalesLabel, "${String.format(Locale.US, "%.2f", summaryDay.creditSales)} ${strings.currencyCode}")
+                        SummaryRow(strings.usdSalesLabel, "${String.format(Locale.US, "%.2f", usdSales)} ${strings.currencyCode}")
                         SummaryRow(strings.itemsSoldLabel, "${summaryDay.itemsSoldCount}")
                     }
                 }

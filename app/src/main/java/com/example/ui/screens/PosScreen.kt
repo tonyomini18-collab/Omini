@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -529,7 +531,7 @@ private fun PosProductCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun CartPanel(
     state: StoreUiState,
@@ -543,6 +545,15 @@ private fun CartPanel(
     val total = (subtotal - state.discountAmount).coerceAtLeast(0.0)
     var discountInput by remember(state.discountAmount) {
         mutableStateOf(if (state.discountAmount == 0.0) "" else state.discountAmount.toString())
+    }
+    var usdRateInput by remember(state.usdRateSsp) {
+        mutableStateOf(
+            if (state.usdRateSsp == state.usdRateSsp.toLong().toDouble()) {
+                state.usdRateSsp.toLong().toString()
+            } else {
+                String.format(Locale.US, "%.2f", state.usdRateSsp)
+            }
+        )
     }
     var customerExpanded by remember { mutableStateOf(false) }
 
@@ -585,8 +596,16 @@ private fun CartPanel(
             )
 
             Text(strings.paymentMethod, style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("cash" to strings.payCash, "transfer" to strings.payTransfer, "credit" to strings.payCredit).forEach { (key, label) ->
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf(
+                    "cash" to strings.payCash,
+                    "transfer" to strings.payTransfer,
+                    "credit" to strings.payCredit,
+                    "usd" to strings.payUsd
+                ).forEach { (key, label) ->
                     FilterChip(
                         selected = state.selectedPaymentMethod == key,
                         onClick = { viewModel.setPaymentMethod(key) },
@@ -594,6 +613,22 @@ private fun CartPanel(
                         modifier = Modifier.testTag("pos_pay_$key")
                     )
                 }
+            }
+
+            if (state.selectedPaymentMethod == "usd") {
+                OutlinedTextField(
+                    value = usdRateInput,
+                    onValueChange = { raw ->
+                        usdRateInput = raw
+                        raw.toDoubleOrNull()?.let { parsed ->
+                            if (parsed > 0.0) viewModel.setUsdRateSsp(parsed)
+                        }
+                    },
+                    label = { Text(strings.usdExchangeRateLabel) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("pos_usd_rate_input")
+                )
             }
 
             ExposedDropdownMenuBox(
@@ -643,6 +678,23 @@ private fun CartPanel(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
+            }
+            if (state.selectedPaymentMethod == "usd") {
+                val activeRate = (usdRateInput.toDoubleOrNull()?.takeIf { it > 0.0 }) ?: state.usdRateSsp.takeIf { it > 0.0 } ?: 1300.0
+                val totalUsd = total / activeRate
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(strings.totalInUsdLabel, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "$${String.format(Locale.US, "%.2f", totalUsd)} USD",
+                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                        fontWeight = FontWeight.Bold,
+                        color = SuccessTeal,
+                        modifier = Modifier.testTag("pos_total_usd_text")
+                    )
+                }
             }
 
             Button(

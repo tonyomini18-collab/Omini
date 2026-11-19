@@ -144,6 +144,7 @@ data class StoreUiState(
     val cartItems: List<CartItem> = emptyList(),
     val discountAmount: Double = 0.0,
     val selectedPaymentMethod: String = "cash",
+    val usdRateSsp: Double = 1300.0,
     val selectedCustomerId: String? = null,
     val lastCompletedInvoice: InvoiceEntity? = null,
     val analytics: DashboardAnalytics = DashboardAnalytics(),

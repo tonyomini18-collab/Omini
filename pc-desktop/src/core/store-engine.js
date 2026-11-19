@@ -231,6 +231,7 @@ function createSeedState() {
     notifySyncErrors: true,
     notifyNewVersion: true,
     notifyRolesCsv: "admin,manager",
+    usdRateSsp: 1300,
     updatedAtMillis: ts
   };
 
@@ -271,7 +272,11 @@ class PcStoreEngine {
         const raw = fs.readFileSync(this.dataFilePath, "utf8");
         const parsed = JSON.parse(raw);
         const base = createSeedState();
-        return { ...base, ...parsed };
+        return {
+          ...base,
+          ...parsed,
+          settings: { ...base.settings, ...(parsed.settings || {}) }
+        };
       }
     } catch (_) {
       // fallback to fresh seed state
@@ -590,9 +595,13 @@ class PcStoreEngine {
     return p;
   }
 
-  completeSale(actor, { items, discount = 0, paymentMethod = "cash", customerId = "" }) {
+  completeSale(actor, { items, discount = 0, paymentMethod = "cash", customerId = "", usdRateSsp = null }) {
     if (!["admin", "manager", "seller"].includes(actor.role)) {
       throw new Error("Cashier cannot complete sales");
+    }
+    const normalizedPay = String(paymentMethod || "cash").toLowerCase().trim();
+    if (!["cash", "transfer", "credit", "usd"].includes(normalizedPay)) {
+      throw new Error("Invalid payment method");
     }
     const openDay = this.getOpenBusinessDay();
     if (!openDay) throw new Error("Open business day first");
@@ -630,9 +639,21 @@ class PcStoreEngine {
     const invId = genId("inv");
     const d = new Date(ts);
     const invoiceNumber = `INV-PC-${String(d.getFullYear()).slice(-2)}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${String(ts).slice(-5)}`;
-    const itemsSummary = resolvedItems
+    let itemsSummary = resolvedItems
       .map((i) => `${i.nameEn} x${i.qty} (${i.wholesale ? "W" : "R"}) = ${(i.qty * i.unitPrice).toFixed(2)}`)
       .join("\n");
+
+    let usdAmount = 0;
+    let effectiveUsdRate = Number(this.state.settings.usdRateSsp || 1300);
+    if (normalizedPay === "usd") {
+      const requestedRate = Number(usdRateSsp);
+      if (Number.isFinite(requestedRate) && requestedRate > 0) {
+        effectiveUsdRate = requestedRate;
+        this.state.settings.usdRateSsp = requestedRate;
+      }
+      usdAmount = Number((total / effectiveUsdRate).toFixed(2));
+      itemsSummary += `\nPaid in USD: $${usdAmount.toFixed(2)} USD (1 USD = ${effectiveUsdRate.toFixed(2)} SSP)`;
+    }
 
     const invoice = {
       id: invId,
@@ -646,7 +667,8 @@ class PcStoreEngine {
       discount: clampedDiscount,
       total,
       costTotal,
-      paymentMethod,
+      paymentMethod: normalizedPay,
+      ...(normalizedPay === "usd" ? { usdAmount, usdRateSsp: effectiveUsdRate } : {}),
       status: "completed",
       businessDayId: openDay.id,
       cashierUid: actor.uid,
@@ -674,7 +696,7 @@ class PcStoreEngine {
       this.enqueueCloudOp("movements", mov.id, mov);
     }
 
-    if (paymentMethod === "credit" && customer) {
+    if (normalizedPay === "credit" && customer) {
       customer.balance += total;
       customer.updatedAtMillis = ts;
       this.enqueueCloudOp("customers", customer.id, customer);
@@ -682,9 +704,9 @@ class PcStoreEngine {
 
     const soldQty = resolvedItems.reduce((s, i) => s + i.qty, 0);
     openDay.totalSales += total;
-    if (paymentMethod === "cash") openDay.cashSales += total;
-    if (paymentMethod === "transfer") openDay.transferSales += total;
-    if (paymentMethod === "credit") openDay.creditSales += total;
+    if (normalizedPay === "cash") openDay.cashSales += total;
+    if (normalizedPay === "transfer") openDay.transferSales += total;
+    if (normalizedPay === "credit") openDay.creditSales += total;
     openDay.itemsSoldCount += soldQty;
     openDay.updatedAtMillis = ts;
     this.enqueueCloudOp("business_days", openDay.id, openDay);

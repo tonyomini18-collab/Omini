@@ -2,6 +2,7 @@ package com.example.data.sync
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -32,6 +33,7 @@ class PreferencesManager(private val context: Context) {
     private val keyAdminPasswordHash = stringPreferencesKey("admin_password_hash")
     private val keyPcServerUrl = stringPreferencesKey("pc_server_url")
     private val keyLastPcSyncMillis = longPreferencesKey("last_pc_sync_millis")
+    private val keyUsdRateSsp = doublePreferencesKey("usd_rate_ssp")
 
     companion object {
         const val DEFAULT_ADMIN_UID = "local_admin_omini"
@@ -165,12 +167,22 @@ class PreferencesManager(private val context: Context) {
         prefs[keyLastPcSyncMillis] ?: 0L
     }
 
+    val usdRateSspFlow: Flow<Double> = context.dataStore.data.map { prefs ->
+        prefs[keyUsdRateSsp] ?: 1300.0
+    }
+
     suspend fun setPcServerUrl(url: String) {
         context.dataStore.edit { it[keyPcServerUrl] = url.trim() }
     }
 
     suspend fun setLastPcSyncMillis(millis: Long) {
         context.dataStore.edit { it[keyLastPcSyncMillis] = millis }
+    }
+
+    suspend fun setUsdRateSsp(rate: Double) {
+        if (rate > 0.0) {
+            context.dataStore.edit { it[keyUsdRateSsp] = rate }
+        }
     }
 
     suspend fun markStoreSeeded(storeId: String) {
