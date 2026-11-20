@@ -87,7 +87,20 @@ window.AROMA_I18N = {
     confirmDeleteUser: "هل أنت متأكد من حذف هذا المستخدم؟",
     cashierNoSale: "صلاحية الكاشير لتحديث المنتجات والمخزون ولا تشمل البيع",
     sellerNoEdit: "صلاحية البائع للبيع فقط ولا يمكنه تعديل المنتجات",
-    cancel: "إلغاء"
+    cancel: "إلغاء",
+    invoiceReceipt: "فاتورة البيع",
+    printInvoice: "طباعة الفاتورة",
+    exportPdf: "تصدير PDF",
+    viewInvoice: "عرض",
+    exchangeRateLabel: "سعر الصرف",
+    invoiceNo: "رقم الفاتورة",
+    dateLabel: "التاريخ",
+    cashierLabel: "البائع / الكاشير",
+    close: "إغلاق",
+    itemCol: "الصنف",
+    qtyCol: "الكمية",
+    unitPriceCol: "السعر",
+    lineTotalCol: "الإجمالي"
   },
   en: {
     appTitle: "Omini POS — Desktop Suite",
@@ -177,6 +190,19 @@ window.AROMA_I18N = {
     confirmDeleteUser: "Delete this user?",
     cashierNoSale: "Cashier role is limited to updating products & stock (cannot sell)",
     sellerNoEdit: "Seller role is limited to sales only (cannot update products)",
-    cancel: "Cancel"
+    cancel: "Cancel",
+    invoiceReceipt: "Sales Invoice",
+    printInvoice: "Print Invoice",
+    exportPdf: "Export PDF",
+    viewInvoice: "View",
+    exchangeRateLabel: "Exchange Rate",
+    invoiceNo: "Invoice #",
+    dateLabel: "Date",
+    cashierLabel: "Cashier",
+    close: "Close",
+    itemCol: "Item",
+    qtyCol: "Qty",
+    unitPriceCol: "Unit Price",
+    lineTotalCol: "Line Total"
   }
 };

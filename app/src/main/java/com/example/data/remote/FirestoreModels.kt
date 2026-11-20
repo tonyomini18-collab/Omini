@@ -94,6 +94,10 @@ data class FsInvoice(
     val businessDayId: String = "",
     val cashierUid: String = "",
     val cashierName: String = "",
+    val itemsJson: String? = null,
+    val currencyCode: String? = null,
+    val usdRateSsp: Double? = null,
+    val usdTotal: Double? = null,
     val memberUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -173,6 +177,7 @@ data class FsStoreSettings(
     val notifySyncErrors: Boolean = true,
     val notifyNewVersion: Boolean = true,
     val notifyRoles: List<String> = listOf("admin", "manager"),
+    val usdRateSsp: Double? = null,
     val memberUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null

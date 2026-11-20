@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Remove
@@ -64,12 +65,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.local.InvoiceEntity
 import com.example.i18n.AppLanguage
 import com.example.ui.components.ProductThumbnail
@@ -85,10 +92,13 @@ import com.example.ui.viewmodel.ProductWithStock
 import com.example.ui.viewmodel.StoreUiState
 import com.example.ui.viewmodel.StoreViewModel
 import com.example.util.BarcodeScannerDialog
+import com.example.util.CurrencyFormatter
 import com.example.util.ExportManager
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PosScreen(
     state: StoreUiState,
@@ -124,6 +134,7 @@ fun PosScreen(
     var showScanner by remember { mutableStateOf(false) }
     var showMobileCartSheet by remember { mutableStateOf(false) }
     var showInvoicesDialog by remember { mutableStateOf(false) }
+    var selectedInvoiceForView by remember { mutableStateOf<InvoiceEntity?>(null) }
     var pendingReturnInvoice by remember { mutableStateOf<InvoiceEntity?>(null) }
 
     val filteredProducts = remember(state.products, searchQuery, selectedCategory) {
@@ -301,9 +312,13 @@ fun PosScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    Text(
-                        "${String.format(Locale.US, "%.2f", cartTotal)} ${strings.currencyCode}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                    val activeRate = state.usdRateSsp.takeIf { it > 0.0 } ?: state.settings.usdRateSsp
+                    DualCurrencyAmountText(
+                        sspAmount = cartTotal,
+                        isUsd = state.selectedPaymentMethod == "usd",
+                        usdRateSsp = activeRate,
+                        currencyCode = strings.currencyCode,
+                        primaryStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -335,10 +350,22 @@ fun PosScreen(
         )
     }
 
-    state.lastCompletedInvoice?.let { receipt ->
+    val activeReceipt = state.lastCompletedInvoice ?: selectedInvoiceForView
+    activeReceipt?.let { receipt ->
         val storeName = if (isRtl) state.settings.storeNameAr else state.settings.storeNameEn
+        val fallbackRate = state.usdRateSsp.takeIf { it > 0.0 } ?: state.settings.usdRateSsp
+        val isUsdReceipt = CurrencyFormatter.isInvoiceUsd(receipt)
+        val receiptRate = CurrencyFormatter.effectiveInvoiceRate(receipt, fallbackRate)
+        val parsedItems = remember(receipt.id, receipt.itemsJson) {
+            CurrencyFormatter.parseInvoiceItems(receipt.itemsJson)
+        }
+        val dateFmt = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US) }
+
         AlertDialog(
-            onDismissRequest = { viewModel.clearLastReceipt() },
+            onDismissRequest = {
+                if (state.lastCompletedInvoice != null) viewModel.clearLastReceipt()
+                selectedInvoiceForView = null
+            },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -346,32 +373,135 @@ fun PosScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${strings.invoiceNumber}: ${receipt.invoiceNumber}", fontWeight = FontWeight.Bold)
-                    Text(receipt.itemsSummary, style = MaterialTheme.typography.bodyMedium)
-                    HorizontalDivider()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text("${strings.invoiceNumber}: ${receipt.invoiceNumber}", fontWeight = FontWeight.Bold, fontFamily = MonoFontFamily)
+                    Text(dateFmt.format(Date(receipt.createdAtMillis)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "${strings.total}: ${String.format(Locale.US, "%.2f", receipt.total)} ${strings.currencyCode}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
-                        fontWeight = FontWeight.Bold
+                        "${if (isRtl) "الدفع" else "Payment"}: ${if (isUsdReceipt) "USD" else receipt.paymentMethod.uppercase()} • ${receipt.saleType.uppercase()}",
+                        style = MaterialTheme.typography.labelMedium
                     )
+                    if (isUsdReceipt && receiptRate > 0.0) {
+                        Text(
+                            "1 USD = ${CurrencyFormatter.formatRateWholeOrDecimal(receiptRate)} ${strings.currencyCode}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    HorizontalDivider()
+
+                    if (parsedItems.isNotEmpty()) {
+                        parsedItems.forEach { item ->
+                            val itemName = if (isRtl) item.nameAr.ifBlank { item.nameEn } else item.nameEn.ifBlank { item.nameAr }
+                            val tier = if (item.wholesale) "W" else "R"
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text("$itemName x${item.qty} ($tier)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    DualCurrencyAmountText(
+                                        sspAmount = item.unitPriceSsp,
+                                        isUsd = isUsdReceipt,
+                                        usdRateSsp = receiptRate,
+                                        currencyCode = strings.currencyCode,
+                                        primaryStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFontFamily)
+                                    )
+                                    DualCurrencyAmountText(
+                                        sspAmount = item.lineTotalSsp,
+                                        isUsd = isUsdReceipt,
+                                        usdRateSsp = receiptRate,
+                                        currencyCode = strings.currencyCode,
+                                        primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(receipt.itemsSummary, style = MaterialTheme.typography.bodyMedium)
+                    }
+
+                    HorizontalDivider()
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(strings.subtotal, style = MaterialTheme.typography.bodyMedium)
+                        DualCurrencyAmountText(
+                            sspAmount = receipt.subtotal,
+                            isUsd = isUsdReceipt,
+                            usdRateSsp = receiptRate,
+                            currencyCode = strings.currencyCode,
+                            primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily)
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(strings.discount, style = MaterialTheme.typography.bodyMedium)
+                        DualCurrencyAmountText(
+                            sspAmount = receipt.discount,
+                            isUsd = isUsdReceipt,
+                            usdRateSsp = receiptRate,
+                            currencyCode = strings.currencyCode,
+                            primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily),
+                            negativePrefix = receipt.discount > 0.0
+                        )
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(strings.total, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        DualCurrencyAmountText(
+                            sspAmount = receipt.total,
+                            isUsd = isUsdReceipt,
+                            usdRateSsp = receiptRate,
+                            currencyCode = strings.currencyCode,
+                            primaryStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                            primaryColor = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        ExportManager.exportInvoicePdf(context, storeName, receipt, strings.currencyCode, isRtl)
-                            .onSuccess { intent -> context.startActivity(IntentChooserHelper.create(intent, strings.sharePdfReceipt)) }
-                    },
-                    modifier = Modifier.testTag("share_receipt_pdf_btn")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(strings.sharePdfReceipt)
+                    OutlinedButton(
+                        onClick = {
+                            ExportManager.printInvoicePdf(context, storeName, receipt, strings.currencyCode, isRtl, fallbackRate)
+                        },
+                        modifier = Modifier.testTag("print_receipt_btn")
+                    ) {
+                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.printReceipt)
+                    }
+                    Button(
+                        onClick = {
+                            ExportManager.exportInvoicePdf(context, storeName, receipt, strings.currencyCode, isRtl, fallbackRate)
+                                .onSuccess { intent -> context.startActivity(IntentChooserHelper.create(intent, strings.sharePdfReceipt)) }
+                        },
+                        modifier = Modifier.testTag("share_receipt_pdf_btn")
+                    ) {
+                        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(strings.sharePdfReceipt)
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.clearLastReceipt() }) {
+                TextButton(
+                    onClick = {
+                        if (state.lastCompletedInvoice != null) viewModel.clearLastReceipt()
+                        selectedInvoiceForView = null
+                    }
+                ) {
                     Text(strings.closeLabel)
                 }
             }
@@ -379,6 +509,7 @@ fun PosScreen(
     }
 
     if (showInvoicesDialog) {
+        val fallbackRate = state.usdRateSsp.takeIf { it > 0.0 } ?: state.settings.usdRateSsp
         AlertDialog(
             onDismissRequest = { showInvoicesDialog = false },
             title = { Text(strings.recentInvoices) },
@@ -390,7 +521,15 @@ fun PosScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(state.invoices.take(25), key = { it.id }) { inv ->
-                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                        val invIsUsd = CurrencyFormatter.isInvoiceUsd(inv)
+                        val invRate = CurrencyFormatter.effectiveInvoiceRate(inv, fallbackRate)
+                        Card(
+                            modifier = Modifier.clickable {
+                                showInvoicesDialog = false
+                                selectedInvoiceForView = inv
+                            },
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
                             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -404,15 +543,44 @@ fun PosScreen(
                                         contentColor = if (inv.status == "returned") DangerCrimson else SuccessTeal
                                     )
                                 }
-                                Text(
-                                    "${String.format(Locale.US, "%.2f", inv.total)} ${strings.currencyCode} • ${inv.paymentMethod.uppercase()}",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    DualCurrencyAmountText(
+                                        sspAmount = inv.total,
+                                        isUsd = invIsUsd,
+                                        usdRateSsp = invRate,
+                                        currencyCode = strings.currencyCode,
+                                        primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text("• ${inv.paymentMethod.uppercase()}", style = MaterialTheme.typography.labelSmall)
+                                }
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            showInvoicesDialog = false
+                                            selectedInvoiceForView = inv
+                                        }
+                                    ) {
+                                        Text(strings.viewInvoice)
+                                    }
                                     OutlinedButton(
                                         onClick = {
                                             val storeName = if (isRtl) state.settings.storeNameAr else state.settings.storeNameEn
-                                            ExportManager.exportInvoicePdf(context, storeName, inv, strings.currencyCode, isRtl)
+                                            ExportManager.printInvoicePdf(context, storeName, inv, strings.currencyCode, isRtl, fallbackRate)
+                                        }
+                                    ) {
+                                        Text(strings.printReceipt)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val storeName = if (isRtl) state.settings.storeNameAr else state.settings.storeNameEn
+                                            ExportManager.exportInvoicePdf(context, storeName, inv, strings.currencyCode, isRtl, fallbackRate)
                                                 .onSuccess { intent -> context.startActivity(IntentChooserHelper.create(intent, strings.sharePdfReceipt)) }
                                         }
                                     ) {
@@ -475,7 +643,7 @@ private fun PosProductCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = item.currentStock > 0, onClick = onClick)
+            .clickable(onClick = onClick)
             .testTag("pos_product_card_${p.id}"),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -542,7 +710,9 @@ private fun CartPanel(
     val strings = LocalStoreStrings.current
     val isRtl = state.language == AppLanguage.AR
     val subtotal = state.cartItems.sumOf { it.lineTotal }
-    val total = (subtotal - state.discountAmount).coerceAtLeast(0.0)
+    val appliedDiscount = state.discountAmount.coerceIn(0.0, subtotal)
+    val total = (subtotal - appliedDiscount).coerceAtLeast(0.0)
+    val isUsdMode = state.selectedPaymentMethod == "usd"
     var discountInput by remember(state.discountAmount) {
         mutableStateOf(if (state.discountAmount == 0.0) "" else state.discountAmount.toString())
     }
@@ -555,6 +725,9 @@ private fun CartPanel(
             }
         )
     }
+    val activeRate = (usdRateInput.toDoubleOrNull()?.takeIf { it > 0.0 })
+        ?: state.usdRateSsp.takeIf { it > 0.0 }
+        ?: state.settings.usdRateSsp
     var customerExpanded by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -577,8 +750,12 @@ private fun CartPanel(
                 CartLineRow(
                     item = cartItem,
                     isRtl = isRtl,
+                    isUsdMode = isUsdMode,
+                    usdRateSsp = activeRate,
+                    currencyCode = strings.currencyCode,
                     onIncrement = { viewModel.updateCartItemQuantity(cartItem.product.id, cartItem.quantity + 1) },
                     onDecrement = { viewModel.updateCartItemQuantity(cartItem.product.id, cartItem.quantity - 1) },
+                    onSetQuantity = { q -> viewModel.updateCartItemQuantity(cartItem.product.id, q) },
                     onToggleWholesale = { viewModel.toggleCartItemWholesale(cartItem.product.id) }
                 )
             }
@@ -615,7 +792,7 @@ private fun CartPanel(
                 }
             }
 
-            if (state.selectedPaymentMethod == "usd") {
+            if (isUsdMode) {
                 OutlinedTextField(
                     value = usdRateInput,
                     onValueChange = { raw ->
@@ -666,35 +843,41 @@ private fun CartPanel(
 
             HorizontalDivider()
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(strings.subtotal)
-                Text("${String.format(Locale.US, "%.2f", subtotal)} ${strings.currencyCode}", fontFamily = MonoFontFamily)
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(strings.total, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "${String.format(Locale.US, "%.2f", total)} ${strings.currencyCode}",
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                DualCurrencyAmountText(
+                    sspAmount = subtotal,
+                    isUsd = isUsdMode,
+                    usdRateSsp = activeRate,
+                    currencyCode = strings.currencyCode,
+                    primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily)
                 )
             }
-            if (state.selectedPaymentMethod == "usd") {
-                val activeRate = (usdRateInput.toDoubleOrNull()?.takeIf { it > 0.0 }) ?: state.usdRateSsp.takeIf { it > 0.0 } ?: 1300.0
-                val totalUsd = total / activeRate
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(strings.totalInUsdLabel, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "$${String.format(Locale.US, "%.2f", totalUsd)} USD",
-                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
-                        fontWeight = FontWeight.Bold,
-                        color = SuccessTeal,
-                        modifier = Modifier.testTag("pos_total_usd_text")
+            if (appliedDiscount > 0.0 || isUsdMode) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(strings.discount)
+                    DualCurrencyAmountText(
+                        sspAmount = appliedDiscount,
+                        isUsd = isUsdMode,
+                        usdRateSsp = activeRate,
+                        currencyCode = strings.currencyCode,
+                        primaryStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily),
+                        negativePrefix = appliedDiscount > 0.0
                     )
                 }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(strings.total, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                DualCurrencyAmountText(
+                    sspAmount = total,
+                    isUsd = isUsdMode,
+                    usdRateSsp = activeRate,
+                    currencyCode = strings.currencyCode,
+                    primaryStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                    primaryColor = if (isUsdMode) SuccessTeal else MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag(if (isUsdMode) "pos_total_usd_text" else "pos_total_ssp_text")
+                )
             }
 
             Button(
@@ -715,15 +898,76 @@ private fun CartPanel(
 }
 
 @Composable
+private fun DualCurrencyAmountText(
+    sspAmount: Double,
+    isUsd: Boolean,
+    usdRateSsp: Double,
+    currencyCode: String,
+    modifier: Modifier = Modifier,
+    primaryStyle: TextStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFontFamily),
+    primaryColor: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null,
+    negativePrefix: Boolean = false
+) {
+    if (isUsd && usdRateSsp > 0.0) {
+        val conv = CurrencyFormatter.convertSspToUsd(sspAmount, usdRateSsp, negativePrefix = negativePrefix)
+        val subFontSize = if (primaryStyle.fontSize.isSp) {
+            (primaryStyle.fontSize.value * 0.78f).coerceAtLeast(10f).sp
+        } else {
+            MaterialTheme.typography.labelSmall.fontSize
+        }
+        val subColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+        Text(
+            text = buildAnnotatedString {
+                withStyle(
+                    SpanStyle(
+                        color = primaryColor,
+                        fontWeight = fontWeight ?: primaryStyle.fontWeight
+                    )
+                ) {
+                    append(conv.usdText)
+                }
+                append(" ")
+                withStyle(
+                    SpanStyle(
+                        fontSize = subFontSize,
+                        color = subColor,
+                        fontWeight = FontWeight.Normal
+                    )
+                ) {
+                    append("(${conv.sspText})")
+                }
+            },
+            style = primaryStyle,
+            modifier = modifier
+        )
+    } else {
+        val sign = if (negativePrefix && sspAmount > 0.0) "-" else ""
+        Text(
+            text = "$sign${String.format(Locale.US, "%.2f", sspAmount)} $currencyCode",
+            style = primaryStyle,
+            color = primaryColor,
+            fontWeight = fontWeight ?: primaryStyle.fontWeight,
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
 private fun CartLineRow(
     item: CartItem,
     isRtl: Boolean,
+    isUsdMode: Boolean,
+    usdRateSsp: Double,
+    currencyCode: String,
     onIncrement: () -> Unit,
     onDecrement: () -> Unit,
+    onSetQuantity: (Int) -> Unit,
     onToggleWholesale: () -> Unit
 ) {
     val strings = LocalStoreStrings.current
     val name = if (isRtl) item.product.nameAr else item.product.nameEn
+    var qtyText by remember(item.product.id, item.quantity) { mutableStateOf(item.quantity.toString()) }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -735,10 +979,24 @@ private fun CartLineRow(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${String.format(Locale.US, "%.2f", item.lineTotal)}",
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    DualCurrencyAmountText(
+                        sspAmount = item.unitPrice,
+                        isUsd = isUsdMode,
+                        usdRateSsp = usdRateSsp,
+                        currencyCode = currencyCode,
+                        primaryStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = MonoFontFamily),
+                        primaryColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                DualCurrencyAmountText(
+                    sspAmount = item.lineTotal,
+                    isUsd = isUsdMode,
+                    usdRateSsp = usdRateSsp,
+                    currencyCode = currencyCode,
+                    primaryStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = MonoFontFamily),
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -751,7 +1009,22 @@ private fun CartLineRow(
                     IconButton(onClick = onDecrement, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.Remove, contentDescription = "-")
                     }
-                    Text("${item.quantity}", style = MaterialTheme.typography.titleMedium, fontFamily = MonoFontFamily)
+                    OutlinedTextField(
+                        value = qtyText,
+                        onValueChange = { raw ->
+                            val digits = raw.filter { it.isDigit() }
+                            qtyText = digits
+                            val parsed = digits.toIntOrNull()
+                            if (parsed != null && parsed >= 1) {
+                                onSetQuantity(parsed)
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier
+                            .width(76.dp)
+                            .testTag("cart_qty_input_${item.product.id}")
+                    )
                     IconButton(onClick = onIncrement, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Filled.Add, contentDescription = "+")
                     }

@@ -199,7 +199,54 @@ th, td { text-align: start; padding: 9px 10px; border-bottom: 1px solid var(--bo
 .error-text { color: var(--danger); font-size: 13px; font-weight: 600; }
 .mono { font-family: Consolas, monospace; }
 
+.ssp-equiv {
+  font-size: 0.78em;
+  font-weight: 400;
+  opacity: 0.72;
+  margin-inline-start: 4px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 16px;
+}
+
+.invoice-modal-card {
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
 @media print {
   .sidebar, .topbar, .no-print { display: none !important; }
   body { background: #fff; color: #000; }
+  body.printing-invoice #loginView,
+  body.printing-invoice #appView { display: none !important; }
+  body.printing-invoice #invoiceModal {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+  body.printing-invoice .invoice-modal-card {
+    max-width: 100%;
+    max-height: none;
+    overflow: visible;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
 }

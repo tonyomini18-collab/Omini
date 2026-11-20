@@ -444,6 +444,13 @@ private fun StoreCustomizationTab(
     var secondaryHex by remember(s.secondaryColorHex) { mutableStateOf(s.secondaryColorHex) }
     var logoUri by remember(s.logoUri) { mutableStateOf(s.logoUri) }
     var timeoutStr by remember(s.sessionTimeoutMinutes) { mutableStateOf(s.sessionTimeoutMinutes.toString()) }
+    var usdRateStr by remember(s.usdRateSsp, state.usdRateSsp) {
+        val current = s.usdRateSsp.takeIf { it > 0.0 } ?: state.usdRateSsp
+        mutableStateOf(
+            if (current == current.toLong().toDouble()) current.toLong().toString()
+            else String.format(Locale.US, "%.2f", current)
+        )
+    }
     var nLowStock by remember(s.notifyLowStock) { mutableStateOf(s.notifyLowStock) }
     var nDayNotClosed by remember(s.notifyDayNotClosed) { mutableStateOf(s.notifyDayNotClosed) }
     var nNewUser by remember(s.notifyNewUser) { mutableStateOf(s.notifyNewUser) }
@@ -522,6 +529,16 @@ private fun StoreCustomizationTab(
             )
         }
         item {
+            OutlinedTextField(
+                value = usdRateStr,
+                onValueChange = { usdRateStr = it },
+                label = { Text(strings.usdExchangeRateLabel) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("settings_usd_rate_input")
+            )
+        }
+        item {
             Text(strings.notificationSettings, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             ToggleRow(strings.notifyLowStock, nLowStock) { nLowStock = it }
             ToggleRow(strings.notifyDayNotClosed, nDayNotClosed) { nDayNotClosed = it }
@@ -559,7 +576,8 @@ private fun StoreCustomizationTab(
                             notifyNewUser = nNewUser,
                             notifySyncErrors = nSyncErr,
                             notifyNewVersion = nNewVer,
-                            notifyRolesCsv = rolesSet.joinToString(",")
+                            notifyRolesCsv = rolesSet.joinToString(","),
+                            usdRateSsp = usdRateStr.toDoubleOrNull()?.takeIf { it > 0.0 } ?: s.usdRateSsp
                         )
                     )
                 },

@@ -124,10 +124,10 @@ service cloud.firestore {
              data.costPrice is number && data.costPrice >= 0 &&
              data.retailPrice is number && data.retailPrice >= 0 &&
              data.wholesalePrice is number && data.wholesalePrice >= 0 &&
-             data.wholesaleMinQty is int && data.wholesaleMinQty >= 1 && data.wholesaleMinQty <= 100000 &&
+             data.wholesaleMinQty is int && data.wholesaleMinQty >= 1 &&
              data.unitAr is string && data.unitAr.size() >= 1 && data.unitAr.size() <= 40 &&
              data.unitEn is string && data.unitEn.size() >= 1 && data.unitEn.size() <= 40 &&
-             data.lowStockThreshold is int && data.lowStockThreshold >= 0 && data.lowStockThreshold <= 100000 &&
+             data.lowStockThreshold is int && data.lowStockThreshold >= 0 &&
              data.isDeleted is bool &&
              isValidMemberList(data.memberUids, storeId) &&
              isValidTimestamp(data.createdAt) &&
@@ -162,6 +162,10 @@ service cloud.firestore {
              data.businessDayId is string && data.businessDayId.size() >= 1 && data.businessDayId.size() <= 64 &&
              data.cashierUid is string && data.cashierUid.size() >= 1 && data.cashierUid.size() <= 128 &&
              data.cashierName is string && data.cashierName.size() >= 1 && data.cashierName.size() <= 100 &&
+             (!('itemsJson' in data) || data.itemsJson == null || (data.itemsJson is string && data.itemsJson.size() <= 16000)) &&
+             (!('currencyCode' in data) || data.currencyCode == null || data.currencyCode in ['SSP', 'USD']) &&
+             (!('usdRateSsp' in data) || data.usdRateSsp == null || (data.usdRateSsp is number && data.usdRateSsp >= 0)) &&
+             (!('usdTotal' in data) || data.usdTotal == null || (data.usdTotal is number && data.usdTotal >= 0)) &&
              isValidMemberList(data.memberUids, storeId) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
@@ -232,6 +236,7 @@ service cloud.firestore {
              data.notifyNewVersion is bool &&
              data.notifyRoles is list && data.notifyRoles.size() <= 5 &&
              (data.notifyRoles.size() == 0 || data.notifyRoles[0] is string) &&
+             (!('usdRateSsp' in data) || data.usdRateSsp == null || (data.usdRateSsp is number && data.usdRateSsp > 0)) &&
              isValidMemberList(data.memberUids, storeId) &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
@@ -365,7 +370,7 @@ service cloud.firestore {
                          isValidId(invoiceId) &&
                          incoming().cashierUid == request.auth.uid &&
                          incoming().keys().hasAll(['invoiceNumber', 'saleType', 'itemsSummary', 'subtotal', 'discount', 'total', 'costTotal', 'paymentMethod', 'status', 'businessDayId', 'cashierUid', 'cashierName', 'memberUids', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['invoiceNumber', 'saleType', 'customerId', 'customerName', 'itemsSummary', 'subtotal', 'discount', 'total', 'costTotal', 'paymentMethod', 'status', 'businessDayId', 'cashierUid', 'cashierName', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['invoiceNumber', 'saleType', 'customerId', 'customerName', 'itemsSummary', 'itemsJson', 'subtotal', 'discount', 'total', 'costTotal', 'paymentMethod', 'currencyCode', 'usdRateSsp', 'usdTotal', 'status', 'businessDayId', 'cashierUid', 'cashierName', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidInvoice(incoming(), storeId) &&
                          isStoreSeller(storeId);
         allow update: if isSignedIn() &&
@@ -473,14 +478,14 @@ service cloud.firestore {
         allow create: if isSignedIn() &&
                          isValidId(settingId) &&
                          incoming().keys().hasAll(['storeNameAr', 'storeNameEn', 'primaryColorHex', 'secondaryColorHex', 'sessionTimeoutMinutes', 'notifyLowStock', 'notifyDayNotClosed', 'notifyNewUser', 'notifySyncErrors', 'notifyNewVersion', 'notifyRoles', 'memberUids', 'createdAt', 'updatedAt']) &&
-                         incoming().keys().hasOnly(['storeNameAr', 'storeNameEn', 'primaryColorHex', 'secondaryColorHex', 'logoUri', 'sessionTimeoutMinutes', 'notifyLowStock', 'notifyDayNotClosed', 'notifyNewUser', 'notifySyncErrors', 'notifyNewVersion', 'notifyRoles', 'memberUids', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['storeNameAr', 'storeNameEn', 'primaryColorHex', 'secondaryColorHex', 'logoUri', 'sessionTimeoutMinutes', 'notifyLowStock', 'notifyDayNotClosed', 'notifyNewUser', 'notifySyncErrors', 'notifyNewVersion', 'notifyRoles', 'usdRateSsp', 'memberUids', 'createdAt', 'updatedAt']) &&
                          isValidStoreSettings(incoming(), storeId) &&
                          isStoreAdmin(storeId);
         allow update: if isSignedIn() &&
                          isValidId(settingId) &&
                          incoming().createdAt == existing().createdAt &&
                          isValidStoreSettings(incoming(), storeId) &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['storeNameAr', 'storeNameEn', 'primaryColorHex', 'secondaryColorHex', 'logoUri', 'sessionTimeoutMinutes', 'notifyLowStock', 'notifyDayNotClosed', 'notifyNewUser', 'notifySyncErrors', 'notifyNewVersion', 'notifyRoles', 'memberUids', 'updatedAt']) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['storeNameAr', 'storeNameEn', 'primaryColorHex', 'secondaryColorHex', 'logoUri', 'sessionTimeoutMinutes', 'notifyLowStock', 'notifyDayNotClosed', 'notifyNewUser', 'notifySyncErrors', 'notifyNewVersion', 'notifyRoles', 'usdRateSsp', 'memberUids', 'updatedAt']) &&
                          isStoreAdmin(storeId);
         allow delete: if false;
       }

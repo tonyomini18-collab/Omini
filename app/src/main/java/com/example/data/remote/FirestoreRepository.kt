@@ -265,6 +265,10 @@ class FirestoreRepository(
                 put("businessDayId", invoice.businessDayId)
                 put("cashierUid", uid)
                 put("cashierName", invoice.cashierName.ifBlank { "Cashier" })
+                invoice.itemsJson?.takeIf { it.isNotBlank() }?.let { put("itemsJson", it) }
+                invoice.currencyCode?.takeIf { it.isNotBlank() }?.let { put("currencyCode", it) }
+                invoice.usdRateSsp?.takeIf { it >= 0.0 }?.let { put("usdRateSsp", it) }
+                invoice.usdTotal?.takeIf { it >= 0.0 }?.let { put("usdTotal", it) }
                 put("memberUids", memberUids)
                 put("createdAt", FieldValue.serverTimestamp())
                 put("updatedAt", FieldValue.serverTimestamp())
@@ -539,6 +543,7 @@ class FirestoreRepository(
             put("notifySyncErrors", settings.notifySyncErrors)
             put("notifyNewVersion", settings.notifyNewVersion)
             put("notifyRoles", settings.notifyRoles)
+            settings.usdRateSsp?.takeIf { it > 0.0 }?.let { put("usdRateSsp", it) }
             put("memberUids", memberUids)
             put("createdAt", existing.getTimestamp("createdAt") ?: FieldValue.serverTimestamp())
             put("updatedAt", FieldValue.serverTimestamp())

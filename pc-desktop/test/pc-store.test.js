@@ -310,7 +310,7 @@ test("LAN sync server connects with Android snapshot and merges prices, sales, a
   }
 });
 
-test("USD payment option records usd method, usdAmount, usdRateSsp, and keeps SSP day totals", () => {
+test("USD payment option records usd method, usdRateSsp snapshot, and keeps old invoices unchanged on rate update", () => {
   const engine = new PcStoreEngine(tmpStoreFile());
   const admin = engine.authenticateLocal("omini", "admin116");
   engine.openBusinessDay(admin, { openingCash: 0 });
@@ -322,9 +322,37 @@ test("USD payment option records usd method, usdAmount, usdRateSsp, and keeps SS
     usdRateSsp: 1450
   });
   assert.equal(inv.paymentMethod, "usd");
+  assert.equal(inv.currencyCode, "USD");
   assert.equal(inv.total, 290);
   assert.equal(inv.usdRateSsp, 1450);
+  assert.equal(inv.usdTotal, Number((290 / 1450).toFixed(2)));
   assert.equal(inv.usdAmount, Number((290 / 1450).toFixed(2)));
   assert.ok(inv.itemsSummary.includes("USD"));
   assert.equal(engine.getOpenBusinessDay().totalSales, 290);
+
+  // Updating settings rate later must NOT modify existing invoice's stored rate
+  engine.saveSettings(admin, { usdRateSsp: 2000 });
+  const persistedInv = engine.state.invoices.find((x) => x.id === inv.id);
+  assert.equal(persistedInv.usdRateSsp, 1450);
+  assert.equal(persistedInv.usdTotal, Number((290 / 1450).toFixed(2)));
+});
+
+test("wholesale and retail sales are unlimited beyond stock count", () => {
+  const engine = new PcStoreEngine(tmpStoreFile());
+  const admin = engine.authenticateLocal("omini", "admin116");
+  engine.openBusinessDay(admin, { openingCash: 0 });
+
+  const wholesaleInv = engine.completeSale(admin, {
+    items: [{ productId: "seed_oud_royal", qty: 500, wholesale: true }],
+    paymentMethod: "cash"
+  });
+  assert.equal(wholesaleInv.saleType, "wholesale");
+  assert.equal(wholesaleInv.total, 500 * 225);
+
+  const retailInv = engine.completeSale(admin, {
+    items: [{ productId: "seed_oud_royal", qty: 200, wholesale: false }],
+    paymentMethod: "cash"
+  });
+  assert.equal(retailInv.saleType, "retail");
+  assert.equal(retailInv.total, 200 * 290);
 });

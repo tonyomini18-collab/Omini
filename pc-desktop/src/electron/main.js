@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { startPcServer } = require("../server");
 
 let mainWindow = null;
@@ -47,6 +47,23 @@ function setupAutoUpdater() {
 
 ipcMain.on("pos-activity-state", (_, active) => {
   hasOpenPosActivity = Boolean(active);
+});
+
+ipcMain.handle("export-invoice-pdf", async (_, invoiceNumber) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  const safeName = String(invoiceNumber || "invoice").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: "Export Invoice PDF",
+    defaultPath: `receipt_${safeName}.pdf`,
+    filters: [{ name: "PDF Documents", extensions: ["pdf"] }]
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+  const pdfBuffer = await mainWindow.webContents.printToPDF({
+    printBackground: true,
+    pageSize: "A4"
+  });
+  fs.writeFileSync(filePath, pdfBuffer);
+  return { ok: true, filePath };
 });
 
 async function createWindow() {

@@ -112,7 +112,7 @@ class SyncEngine(
                                 saleType = fs.saleType,
                                 customerId = fs.customerId ?: "",
                                 customerName = fs.customerName ?: "",
-                                itemsJson = fs.itemsSummary,
+                                itemsJson = fs.itemsJson ?: fs.itemsSummary,
                                 itemsSummary = fs.itemsSummary,
                                 subtotal = fs.subtotal,
                                 discount = fs.discount,
@@ -125,7 +125,10 @@ class SyncEngine(
                                 cashierName = fs.cashierName,
                                 createdAtMillis = fs.createdAt?.toDate()?.time ?: System.currentTimeMillis(),
                                 updatedAtMillis = fs.updatedAt?.toDate()?.time ?: System.currentTimeMillis(),
-                                syncStatus = "SYNCED"
+                                syncStatus = "SYNCED",
+                                currencyCode = fs.currencyCode ?: if (fs.paymentMethod.equals("usd", ignoreCase = true)) "USD" else "SSP",
+                                usdRateSsp = fs.usdRateSsp ?: 0.0,
+                                usdTotal = fs.usdTotal ?: 0.0
                             )
                         }
                         if (entities.isNotEmpty()) dao.upsertInvoices(entities)
@@ -273,9 +276,11 @@ class SyncEngine(
                                     notifySyncErrors = fs.notifySyncErrors,
                                     notifyNewVersion = fs.notifyNewVersion,
                                     notifyRolesCsv = fs.notifyRoles.joinToString(","),
-                                    updatedAtMillis = fs.updatedAt?.toDate()?.time ?: System.currentTimeMillis()
+                                    updatedAtMillis = fs.updatedAt?.toDate()?.time ?: System.currentTimeMillis(),
+                                    usdRateSsp = fs.usdRateSsp?.takeIf { it > 0.0 } ?: 1300.0
                                 )
                             )
+                            fs.usdRateSsp?.takeIf { it > 0.0 }?.let { prefs.setUsdRateSsp(it) }
                         }
                     }
                 }
@@ -410,7 +415,11 @@ class SyncEngine(
                         status = json.getString("status"),
                         businessDayId = json.getString("businessDayId"),
                         cashierUid = json.getString("cashierUid"),
-                        cashierName = json.getString("cashierName")
+                        cashierName = json.getString("cashierName"),
+                        itemsJson = json.optString("itemsJson").takeIf { it.isNotBlank() },
+                        currencyCode = json.optString("currencyCode").takeIf { it.isNotBlank() },
+                        usdRateSsp = if (json.has("usdRateSsp")) json.optDouble("usdRateSsp", 0.0) else null,
+                        usdTotal = if (json.has("usdTotal")) json.optDouble("usdTotal", 0.0) else null
                     ),
                     memberUids
                 ).map { }

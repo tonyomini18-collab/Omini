@@ -268,6 +268,7 @@ class StoreViewModel(
 
                         val next = state.copy(
                             settings = effectiveSettings,
+                            usdRateSsp = effectiveSettings.usdRateSsp.takeIf { it > 0.0 } ?: state.usdRateSsp,
                             releases = releases,
                             availableUpdate = updateCandidate
                         )
@@ -484,18 +485,12 @@ class StoreViewModel(
             }
             return
         }
-        if (item.currentStock <= 0) {
-            _uiState.update {
-                it.copy(statusMessage = if (it.language == AppLanguage.AR) "المنتج غير متوفر في المخزون" else "Product out of stock")
-            }
-            return
-        }
         _uiState.update { state ->
             val current = state.cartItems.toMutableList()
             val idx = current.indexOfFirst { it.product.id == item.product.id }
             if (idx >= 0) {
                 val existing = current[idx]
-                val nextQty = (existing.quantity + 1).coerceAtMost(item.currentStock)
+                val nextQty = existing.quantity + 1
                 val autoWholesale = existing.useWholesalePrice || nextQty >= item.product.wholesaleMinQty
                 current[idx] = existing.copy(quantity = nextQty, useWholesalePrice = autoWholesale)
             } else {
@@ -512,9 +507,8 @@ class StoreViewModel(
             val updated = state.cartItems.mapNotNull { item ->
                 if (item.product.id != productId) return@mapNotNull item
                 if (newQty <= 0) return@mapNotNull null
-                val clamped = newQty.coerceAtMost(item.currentStock.coerceAtLeast(1))
-                val autoWholesale = if (clamped >= item.product.wholesaleMinQty) true else item.useWholesalePrice
-                item.copy(quantity = clamped, useWholesalePrice = autoWholesale)
+                val autoWholesale = if (newQty >= item.product.wholesaleMinQty) true else item.useWholesalePrice
+                item.copy(quantity = newQty, useWholesalePrice = autoWholesale)
             }
             state.copy(cartItems = updated)
         }
@@ -550,6 +544,10 @@ class StoreViewModel(
         _uiState.update { it.copy(usdRateSsp = rate) }
         viewModelScope.launch {
             prefs.setUsdRateSsp(rate)
+            val existingSettings = dao.getSettingsOnce()
+            if (existingSettings != null) {
+                dao.upsertSettings(existingSettings.copy(usdRateSsp = rate, updatedAtMillis = System.currentTimeMillis()))
+            }
         }
     }
 
@@ -609,13 +607,15 @@ class StoreViewModel(
                 val tier = if (item.useWholesalePrice) "W" else "R"
                 "$label x${item.quantity} ($tier) = ${String.format(Locale.US, "%.2f", item.lineTotal)}"
             }.toMutableList()
-            if (state.selectedPaymentMethod == "usd") {
-                val rate = state.usdRateSsp.takeIf { it > 0.0 } ?: 1300.0
-                val usdAmount = total / rate
+            val isUsd = state.selectedPaymentMethod == "usd"
+            val effectiveRate = state.usdRateSsp.takeIf { it > 0.0 } ?: state.settings.usdRateSsp
+            if (isUsd && effectiveRate > 0.0) {
+                val usdTotal = com.example.util.CurrencyFormatter.convertSspToUsd(total, effectiveRate)
+                val rateLabel = com.example.util.CurrencyFormatter.formatRateWholeOrDecimal(effectiveRate)
                 val usdLine = if (state.language == AppLanguage.AR) {
-                    "الدفع بالدولار: $${String.format(Locale.US, "%.2f", usdAmount)} USD (1 USD = ${String.format(Locale.US, "%.2f", rate)} SSP)"
+                    "الدفع بالدولار: ${usdTotal.usdText} (${usdTotal.sspText}) • 1 USD = $rateLabel SSP"
                 } else {
-                    "Paid in USD: $${String.format(Locale.US, "%.2f", usdAmount)} USD (1 USD = ${String.format(Locale.US, "%.2f", rate)} SSP)"
+                    "Paid in USD: ${usdTotal.usdText} (${usdTotal.sspText}) • 1 USD = $rateLabel SSP"
                 }
                 summaryLines.add(usdLine)
             }
@@ -624,6 +624,9 @@ class StoreViewModel(
             val invoiceId = "inv_${UUID.randomUUID().toString().replace("-", "").take(16)}"
             val invoiceNo = "INV-${SimpleDateFormat("yyMMdd-HHmmss", Locale.US).format(Date())}"
             val now = System.currentTimeMillis()
+            val usdInvoiceTotal = if (isUsd && effectiveRate > 0.0) {
+                com.example.util.CurrencyFormatter.roundUsd(total / effectiveRate)
+            } else 0.0
             val invoice = InvoiceEntity(
                 id = invoiceId,
                 invoiceNumber = invoiceNo,
@@ -643,7 +646,10 @@ class StoreViewModel(
                 cashierName = state.userName,
                 createdAtMillis = now,
                 updatedAtMillis = now,
-                syncStatus = "PENDING"
+                syncStatus = "PENDING",
+                currencyCode = if (isUsd) "USD" else "SSP",
+                usdRateSsp = effectiveRate,
+                usdTotal = usdInvoiceTotal
             )
             dao.upsertInvoice(invoice)
             syncEngine.enqueueOperation(
@@ -655,12 +661,16 @@ class StoreViewModel(
                     put("saleType", invoice.saleType)
                     put("customerId", invoice.customerId)
                     put("customerName", invoice.customerName)
+                    put("itemsJson", invoice.itemsJson)
                     put("itemsSummary", invoice.itemsSummary)
                     put("subtotal", invoice.subtotal)
                     put("discount", invoice.discount)
                     put("total", invoice.total)
                     put("costTotal", invoice.costTotal)
                     put("paymentMethod", invoice.paymentMethod)
+                    put("currencyCode", invoice.currencyCode)
+                    put("usdRateSsp", invoice.usdRateSsp)
+                    put("usdTotal", invoice.usdTotal)
                     put("status", invoice.status)
                     put("businessDayId", invoice.businessDayId)
                     put("cashierUid", invoice.cashierUid)
@@ -1347,30 +1357,37 @@ class StoreViewModel(
         val state = _uiState.value
         if (state.effectiveRole != UserRole.ADMIN) return
         viewModelScope.launch {
-            dao.upsertSettings(updated)
+            val rateToSave = updated.usdRateSsp.takeIf { it > 0.0 } ?: state.usdRateSsp
+            val entityToSave = updated.copy(usdRateSsp = rateToSave, updatedAtMillis = System.currentTimeMillis())
+            dao.upsertSettings(entityToSave)
+            if (rateToSave > 0.0) {
+                prefs.setUsdRateSsp(rateToSave)
+                _uiState.update { it.copy(usdRateSsp = rateToSave) }
+            }
             if (state.isOnline && remote.isCloudAuthenticated()) {
                 val members = remote.getMemberUids(state.storeId)
                 remote.upsertSettings(
                     state.storeId,
                     FsStoreSettings(
                         id = "main",
-                        storeNameAr = updated.storeNameAr,
-                        storeNameEn = updated.storeNameEn,
-                        primaryColorHex = updated.primaryColorHex,
-                        secondaryColorHex = updated.secondaryColorHex,
-                        logoUri = updated.logoUri.takeIf { it.isNotBlank() },
-                        sessionTimeoutMinutes = updated.sessionTimeoutMinutes,
-                        notifyLowStock = updated.notifyLowStock,
-                        notifyDayNotClosed = updated.notifyDayNotClosed,
-                        notifyNewUser = updated.notifyNewUser,
-                        notifySyncErrors = updated.notifySyncErrors,
-                        notifyNewVersion = updated.notifyNewVersion,
-                        notifyRoles = updated.notifyRolesCsv.split(",").filter { it.isNotBlank() }
+                        storeNameAr = entityToSave.storeNameAr,
+                        storeNameEn = entityToSave.storeNameEn,
+                        primaryColorHex = entityToSave.primaryColorHex,
+                        secondaryColorHex = entityToSave.secondaryColorHex,
+                        logoUri = entityToSave.logoUri.takeIf { it.isNotBlank() },
+                        sessionTimeoutMinutes = entityToSave.sessionTimeoutMinutes,
+                        notifyLowStock = entityToSave.notifyLowStock,
+                        notifyDayNotClosed = entityToSave.notifyDayNotClosed,
+                        notifyNewUser = entityToSave.notifyNewUser,
+                        notifySyncErrors = entityToSave.notifySyncErrors,
+                        notifyNewVersion = entityToSave.notifyNewVersion,
+                        notifyRoles = entityToSave.notifyRolesCsv.split(",").filter { it.isNotBlank() },
+                        usdRateSsp = rateToSave
                     ),
                     members
                 )
             }
-            recordAuditLog("UPDATE_SETTINGS", "settings", "main", "${updated.storeNameEn} (${updated.primaryColorHex})")
+            recordAuditLog("UPDATE_SETTINGS", "settings", "main", "${entityToSave.storeNameEn} (${entityToSave.primaryColorHex})")
         }
     }
 

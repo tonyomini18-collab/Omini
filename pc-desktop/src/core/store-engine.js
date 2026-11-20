@@ -612,9 +612,7 @@ class PcStoreEngine {
     const resolvedItems = items.map((line) => {
       const prod = this.state.products.find((p) => p.id === line.productId && !p.isDeleted);
       if (!prod) throw new Error(`Product not found: ${line.productId}`);
-      const avail = stocks[prod.id] || 0;
       const qty = Math.max(1, Number(line.qty || 1));
-      if (qty > avail) throw new Error(`Insufficient stock for ${prod.nameEn}`);
       const wholesale = Boolean(line.wholesale);
       const unitPrice = wholesale ? prod.wholesalePrice : prod.retailPrice;
       return {
@@ -643,16 +641,27 @@ class PcStoreEngine {
       .map((i) => `${i.nameEn} x${i.qty} (${i.wholesale ? "W" : "R"}) = ${(i.qty * i.unitPrice).toFixed(2)}`)
       .join("\n");
 
-    let usdAmount = 0;
-    let effectiveUsdRate = Number(this.state.settings.usdRateSsp || 1300);
-    if (normalizedPay === "usd") {
+    const isUsd = normalizedPay === "usd";
+    let effectiveUsdRate = Number(this.state.settings.usdRateSsp);
+    if (!Number.isFinite(effectiveUsdRate) || effectiveUsdRate <= 0) {
+      effectiveUsdRate = 0;
+    }
+    if (isUsd) {
       const requestedRate = Number(usdRateSsp);
       if (Number.isFinite(requestedRate) && requestedRate > 0) {
         effectiveUsdRate = requestedRate;
         this.state.settings.usdRateSsp = requestedRate;
+        this.state.settings.updatedAtMillis = ts;
       }
+    }
+    let usdAmount = 0;
+    if (isUsd && effectiveUsdRate > 0) {
       usdAmount = Number((total / effectiveUsdRate).toFixed(2));
-      itemsSummary += `\nPaid in USD: $${usdAmount.toFixed(2)} USD (1 USD = ${effectiveUsdRate.toFixed(2)} SSP)`;
+      const sspWhole = Math.round(usdAmount * effectiveUsdRate).toLocaleString("en-US");
+      const rateLabel = Number.isInteger(effectiveUsdRate)
+        ? effectiveUsdRate.toLocaleString("en-US")
+        : effectiveUsdRate.toFixed(2);
+      itemsSummary += `\nPaid in USD: $${usdAmount.toFixed(2)} (SSP ${sspWhole}) | 1 USD = ${rateLabel} SSP`;
     }
 
     const invoice = {
@@ -668,7 +677,10 @@ class PcStoreEngine {
       total,
       costTotal,
       paymentMethod: normalizedPay,
-      ...(normalizedPay === "usd" ? { usdAmount, usdRateSsp: effectiveUsdRate } : {}),
+      currencyCode: isUsd ? "USD" : "SSP",
+      usdRateSsp: effectiveUsdRate,
+      usdTotal: usdAmount,
+      ...(isUsd ? { usdAmount } : {}),
       status: "completed",
       businessDayId: openDay.id,
       cashierUid: actor.uid,

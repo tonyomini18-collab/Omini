@@ -188,6 +188,9 @@ object LanSyncClient {
                         put("cashierName", inv.cashierName)
                         put("createdAtMillis", inv.createdAtMillis)
                         put("updatedAtMillis", inv.updatedAtMillis)
+                        put("currencyCode", inv.currencyCode)
+                        put("usdRateSsp", inv.usdRateSsp)
+                        put("usdTotal", inv.usdTotal)
                     })
                 }
             })
@@ -285,6 +288,7 @@ object LanSyncClient {
                     put("notifyNewVersion", settings.notifyNewVersion)
                     put("notifyRolesCsv", settings.notifyRolesCsv)
                     put("updatedAtMillis", settings.updatedAtMillis)
+                    put("usdRateSsp", settings.usdRateSsp)
                 })
             }
             put("releases", JSONArray().apply {
@@ -392,7 +396,12 @@ object LanSyncClient {
                         cashierName = o.optString("cashierName"),
                         createdAtMillis = o.optLong("createdAtMillis", System.currentTimeMillis()),
                         updatedAtMillis = remoteUpdated,
-                        syncStatus = "SYNCED"
+                        syncStatus = "SYNCED",
+                        currencyCode = o.optString("currencyCode").ifBlank {
+                            if (o.optString("paymentMethod").equals("usd", ignoreCase = true)) "USD" else "SSP"
+                        },
+                        usdRateSsp = o.optDouble("usdRateSsp", 0.0),
+                        usdTotal = o.optDouble("usdTotal", o.optDouble("usdAmount", 0.0))
                     )
                 )
             }
@@ -542,7 +551,8 @@ object LanSyncClient {
                         notifySyncErrors = settingsObj.optBoolean("notifySyncErrors", true),
                         notifyNewVersion = settingsObj.optBoolean("notifyNewVersion", true),
                         notifyRolesCsv = settingsObj.optString("notifyRolesCsv", "admin,manager"),
-                        updatedAtMillis = remoteUpdated
+                        updatedAtMillis = remoteUpdated,
+                        usdRateSsp = settingsObj.optDouble("usdRateSsp", 1300.0).takeIf { it > 0.0 } ?: 1300.0
                     )
                 )
             }

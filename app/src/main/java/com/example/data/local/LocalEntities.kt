@@ -58,14 +58,17 @@ data class InvoiceEntity(
     val discount: Double,
     val total: Double,
     val costTotal: Double,
-    val paymentMethod: String, // "cash", "transfer", "credit"
+    val paymentMethod: String, // "cash", "transfer", "credit", "usd"
     val status: String, // "completed", "returned"
     val businessDayId: String,
     val cashierUid: String,
     val cashierName: String,
     val createdAtMillis: Long = System.currentTimeMillis(),
     val updatedAtMillis: Long = System.currentTimeMillis(),
-    val syncStatus: String = "SYNCED"
+    val syncStatus: String = "SYNCED",
+    val currencyCode: String = "SSP",
+    val usdRateSsp: Double = 0.0,
+    val usdTotal: Double = 0.0
 )
 
 @Entity(tableName = "parties")
@@ -153,7 +156,8 @@ data class StoreSettingsEntity(
     val notifySyncErrors: Boolean = true,
     val notifyNewVersion: Boolean = true,
     val notifyRolesCsv: String = "admin,manager",
-    val updatedAtMillis: Long = System.currentTimeMillis()
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+    val usdRateSsp: Double = 1300.0
 )
 
 @Entity(tableName = "app_releases")

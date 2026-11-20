@@ -123,6 +123,187 @@
     return `${Number(v || 0).toFixed(2)} ${t().currency}`;
   }
 
+  function escapeHtml(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function getSettingsUsdRate() {
+    const r = Number(state && state.settings && state.settings.usdRateSsp);
+    return Number.isFinite(r) && r > 0 ? r : 0;
+  }
+
+  function getActiveCartUsdRate() {
+    const r = Number(posUsdRate || getSettingsUsdRate());
+    return Number.isFinite(r) && r > 0 ? r : 0;
+  }
+
+  function isInvoiceUsd(inv) {
+    return Boolean(
+      inv && (String(inv.currencyCode || "").toUpperCase() === "USD" || String(inv.paymentMethod || "").toLowerCase() === "usd")
+    );
+  }
+
+  function getInvoiceRate(inv) {
+    const stored = Number(inv && inv.usdRateSsp);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    return getSettingsUsdRate();
+  }
+
+  function roundUsd(val) {
+    const r = Math.round(Number(val || 0) * 100) / 100;
+    return Math.abs(r) < 0.005 ? 0 : r;
+  }
+
+  function convertSspToUsdParts(sspAmount, rate, negativePrefix = false) {
+    const isNeg = negativePrefix || Number(sspAmount) < 0;
+    const absSsp = Math.abs(Number(sspAmount || 0));
+    const usdAbs = rate > 0 ? roundUsd(absSsp / rate) : 0;
+    // Calculate SSP equivalent from the same rate so USD and SSP always match.
+    const sspWhole = rate > 0 ? Math.round(usdAbs * rate) : 0;
+    const sign = isNeg && usdAbs > 0 ? "-" : "";
+    const usdStr = usdAbs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return {
+      usdText: `${sign}$${usdStr}`,
+      sspText: `SSP ${sspWhole.toLocaleString("en-US")}`
+    };
+  }
+
+  function renderAmountHtml(sspAmount, isUsd, rate, negativePrefix = false) {
+    if (isUsd && rate > 0) {
+      const conv = convertSspToUsdParts(sspAmount, rate, negativePrefix);
+      return `<span>${conv.usdText} <span class="ssp-equiv">(${conv.sspText})</span></span>`;
+    }
+    const amt = Math.abs(Number(sspAmount || 0));
+    const isNeg = negativePrefix || Number(sspAmount) < 0;
+    const sign = isNeg && amt > 0 ? "-" : "";
+    return `${sign}${amt.toFixed(2)} ${t().currency}`;
+  }
+
+  function parseInvoiceLineItems(inv) {
+    if (!inv || !inv.itemsJson) return [];
+    try {
+      const parsed = JSON.parse(inv.itemsJson);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function closeInvoiceModal() {
+    const modal = document.getElementById("invoiceModal");
+    if (modal) modal.classList.add("hidden");
+    document.body.classList.remove("printing-invoice");
+  }
+
+  function printCurrentInvoice() {
+    document.body.classList.add("printing-invoice");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-invoice"), 500);
+  }
+
+  async function exportCurrentInvoicePdf(invoiceNumber) {
+    if (window.aromaElectron && typeof window.aromaElectron.exportInvoicePdf === "function") {
+      document.body.classList.add("printing-invoice");
+      try {
+        await window.aromaElectron.exportInvoicePdf(invoiceNumber);
+      } finally {
+        document.body.classList.remove("printing-invoice");
+      }
+      return;
+    }
+    printCurrentInvoice();
+  }
+
+  function openInvoiceModal(inv) {
+    if (!inv) return;
+    const s = t();
+    const modal = document.getElementById("invoiceModal");
+    const area = document.getElementById("invoicePrintArea");
+    if (!modal || !area) return;
+
+    const isUsd = isInvoiceUsd(inv);
+    const rate = getInvoiceRate(inv);
+    const storeName = lang === "ar" ? state.settings.storeNameAr : state.settings.storeNameEn;
+    const items = parseInvoiceLineItems(inv);
+    const dateStr = inv.createdAtMillis ? new Date(inv.createdAtMillis).toLocaleString(lang === "ar" ? "ar-EG" : "en-US") : "";
+    const rateDisplay = Number.isInteger(rate) ? rate.toLocaleString("en-US") : Number(rate || 0).toFixed(2);
+    const discountVal = Number(inv.discount || 0);
+
+    area.innerHTML = `
+      <div class="stack">
+        <div class="between">
+          <div>
+            <h2 style="margin:0;color:var(--primary)">${escapeHtml(storeName)}</h2>
+            <div style="color:var(--muted);font-size:13px">${s.invoiceReceipt}</div>
+          </div>
+          <div class="row no-print">
+            <button type="button" id="modalPrintBtn" class="btn">${s.printInvoice}</button>
+            <button type="button" id="modalPdfBtn" class="btn btn-primary">${s.exportPdf}</button>
+            <button type="button" id="modalCloseBtn" class="btn">${s.close}</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:10px 0;font-size:13px" class="stack">
+          <div class="between"><span>${s.invoiceNo}: <strong class="mono">${escapeHtml(inv.invoiceNumber)}</strong></span><span>${s.dateLabel}: ${escapeHtml(dateStr)}</span></div>
+          <div class="between"><span>${s.cashierLabel}: ${escapeHtml(inv.cashierName || "-")}</span><span>${s.customer}: ${escapeHtml(inv.customerName || s.walkIn)}</span></div>
+          <div class="between">
+            <span>${s.paymentMethod}: <strong>${isUsd ? "USD" : escapeHtml(String(inv.paymentMethod || "").toUpperCase())}</strong> (${escapeHtml(inv.saleType || "")})</span>
+            ${isUsd && rate > 0 ? `<span class="mono" style="color:var(--muted)">${s.exchangeRateLabel}: 1 USD = ${rateDisplay} ${s.currency}</span>` : ""}
+          </div>
+        </div>
+        ${
+          items.length > 0
+            ? `<table>
+                <thead>
+                  <tr>
+                    <th>${s.itemCol}</th>
+                    <th>${s.qtyCol}</th>
+                    <th>${s.unitPriceCol}</th>
+                    <th>${s.lineTotalCol}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items
+                    .map((item) => {
+                      const itemName = lang === "ar" ? item.nameAr || item.nameEn : item.nameEn || item.nameAr;
+                      const qty = Number(item.qty || 1);
+                      const unitPrice = Number(item.unitPrice || 0);
+                      const lineTotal = unitPrice * qty;
+                      return `<tr>
+                        <td>${escapeHtml(itemName)} <span style="color:var(--muted);font-size:12px">(${item.wholesale ? "W" : "R"})</span></td>
+                        <td class="mono">${qty}</td>
+                        <td class="mono">${renderAmountHtml(unitPrice, isUsd, rate)}</td>
+                        <td class="mono"><strong>${renderAmountHtml(lineTotal, isUsd, rate)}</strong></td>
+                      </tr>`;
+                    })
+                    .join("")}
+                </tbody>
+              </table>`
+            : `<pre style="white-space:pre-wrap;font-family:inherit;margin:0">${escapeHtml(inv.itemsSummary || "")}</pre>`
+        }
+        <div class="stack" style="border-top:1px solid var(--border);padding-top:12px">
+          <div class="between"><span>${s.subtotal}</span><span class="mono">${renderAmountHtml(inv.subtotal, isUsd, rate)}</span></div>
+          <div class="between"><span>${s.discount}</span><span class="mono">${renderAmountHtml(discountVal, isUsd, rate, discountVal > 0)}</span></div>
+          <div class="between" style="font-size:18px;font-weight:700;color:var(--primary)">
+            <span>${s.total}</span>
+            <span class="mono">${renderAmountHtml(inv.total, isUsd, rate)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    modal.classList.remove("hidden");
+    document.getElementById("modalCloseBtn").onclick = closeInvoiceModal;
+    document.getElementById("modalPrintBtn").onclick = printCurrentInvoice;
+    document.getElementById("modalPdfBtn").onclick = () => exportCurrentInvoicePdf(inv.invoiceNumber);
+    modal.onclick = (ev) => {
+      if (ev.target === modal) closeInvoiceModal();
+    };
+  }
+
   function notifyElectronPosActivity() {
     if (window.aromaElectron && state) {
       window.aromaElectron.setPosActivity(Boolean(state.openBusinessDay) || cart.length > 0);
@@ -147,9 +328,10 @@
       return catOk && textOk;
     });
     const subtotal = cart.reduce((acc, c) => acc + c.qty * (c.wholesale ? c.product.wholesalePrice : c.product.retailPrice), 0);
-    const total = Math.max(0, subtotal - Number(posDiscount || 0));
-    const effectiveUsdRate = Number(posUsdRate || (state.settings && state.settings.usdRateSsp) || 1300);
-    const totalUsd = effectiveUsdRate > 0 ? total / effectiveUsdRate : 0;
+    const appliedDiscount = Math.min(subtotal, Math.max(0, Number(posDiscount || 0)));
+    const total = Math.max(0, subtotal - appliedDiscount);
+    const isUsdCart = selectedPayMethod === "usd";
+    const effectiveUsdRate = getActiveCartUsdRate();
     const customers = (state.parties || []).filter((p) => p.partyType === "customer");
 
     root.innerHTML = `
@@ -188,28 +370,36 @@
               cart.length === 0
                 ? `<p style="color:var(--muted)">${s.emptyCart}</p>`
                 : cart
-                    .map(
-                      (c, idx) => `
+                    .map((c, idx) => {
+                      const unitPrice = c.wholesale ? c.product.wholesalePrice : c.product.retailPrice;
+                      const lineTotal = unitPrice * c.qty;
+                      return `
                 <div class="between" style="border-bottom:1px solid var(--border);padding-bottom:8px">
                   <div>
                     <strong>${lang === "ar" ? c.product.nameAr : c.product.nameEn}</strong>
                     <div style="font-size:12px">
                       <button class="btn" data-tier="${idx}">${c.wholesale ? s.wholesale : s.retail}</button>
-                      ${formatMoney(c.wholesale ? c.product.wholesalePrice : c.product.retailPrice)}
+                      <span class="mono">${renderAmountHtml(unitPrice, isUsdCart, effectiveUsdRate)}</span>
+                      <span> • ${s.lineTotalCol}: <strong class="mono">${renderAmountHtml(lineTotal, isUsdCart, effectiveUsdRate)}</strong></span>
                     </div>
                   </div>
                   <div class="row">
                     <button class="btn" data-dec="${idx}">-</button>
-                    <strong class="mono">${c.qty}</strong>
+                    <input type="number" min="1" data-qty="${idx}" value="${c.qty}" style="width:74px;text-align:center;padding:6px" />
                     <button class="btn" data-inc="${idx}">+</button>
                   </div>
-                </div>`
-                    )
+                </div>`;
+                    })
                     .join("")
             }
-            <div class="between"><span>${s.subtotal}</span><strong class="mono">${formatMoney(subtotal)}</strong></div>
+            <div class="between"><span>${s.subtotal}</span><strong id="posSubtotalDisplay" class="mono">${renderAmountHtml(subtotal, isUsdCart, effectiveUsdRate)}</strong></div>
             <label>${s.discount}<input id="posDiscount" type="number" min="0" value="${posDiscount}" /></label>
-            <div class="between"><span>${s.total}</span><strong id="posTotalSsp" class="mono">${formatMoney(total)}</strong></div>
+            ${
+              appliedDiscount > 0 || isUsdCart
+                ? `<div class="between"><span>${s.discount}</span><span id="posDiscountDisplay" class="mono">${renderAmountHtml(appliedDiscount, isUsdCart, effectiveUsdRate, appliedDiscount > 0)}</span></div>`
+                : ""
+            }
+            <div class="between"><span>${s.total}</span><strong id="posTotalDisplay" class="mono" style="color:${isUsdCart ? "var(--success)" : "var(--primary)"}">${renderAmountHtml(total, isUsdCart, effectiveUsdRate)}</strong></div>
             <label>${s.paymentMethod}
               <select id="posPay">
                 <option value="cash" ${selectedPayMethod === "cash" ? "selected" : ""}>${s.cash}</option>
@@ -219,14 +409,10 @@
               </select>
             </label>
             ${
-              selectedPayMethod === "usd"
+              isUsdCart
                 ? `<label>${s.usdRate}
                      <input id="posUsdRate" type="number" min="1" step="any" value="${effectiveUsdRate}" />
-                   </label>
-                   <div class="between" style="color:var(--success);font-weight:700">
-                     <span>${s.totalInUsd}</span>
-                     <strong id="posTotalUsd" class="mono">$${totalUsd.toFixed(2)} USD</strong>
-                   </div>`
+                   </label>`
                 : ""
             }
             <label>${s.customer}
@@ -241,13 +427,22 @@
             <h4 style="margin:0">${s.recentInvoices}</h4>
             ${(state.invoices || [])
               .slice(0, 8)
-              .map(
-                (inv) => `
-              <div class="between" style="font-size:13px">
-                <div><strong class="mono">${inv.invoiceNumber}</strong> — ${formatMoney(inv.total)}${inv.paymentMethod === "usd" && inv.usdAmount ? ` ($${Number(inv.usdAmount).toFixed(2)} USD)` : ` (${inv.paymentMethod})`} (${inv.status})</div>
-                ${inv.status === "completed" ? `<button class="btn" data-ret="${inv.id}">${s.returnBtn}</button>` : ""}
-              </div>`
-              )
+              .map((inv) => {
+                const invUsd = isInvoiceUsd(inv);
+                const invRate = getInvoiceRate(inv);
+                return `
+              <div class="between" style="font-size:13px;gap:8px;flex-wrap:wrap">
+                <div>
+                  <strong class="mono">${inv.invoiceNumber}</strong> —
+                  <span class="mono">${renderAmountHtml(inv.total, invUsd, invRate)}</span>
+                  (${invUsd ? "USD" : inv.paymentMethod}) (${inv.status})
+                </div>
+                <div class="row">
+                  <button class="btn" data-view-inv="${inv.id}">${s.viewInvoice}</button>
+                  ${inv.status === "completed" ? `<button class="btn" data-ret="${inv.id}">${s.returnBtn}</button>` : ""}
+                </div>
+              </div>`;
+              })
               .join("")}
           </div>
         </div>
@@ -295,8 +490,17 @@
     root.querySelectorAll("[data-inc]").forEach((el) => {
       el.onclick = () => {
         const i = Number(el.getAttribute("data-inc"));
-        if (cart[i].qty < cart[i].product.currentStock) cart[i].qty++;
+        cart[i].qty++;
         if (cart[i].qty >= cart[i].product.wholesaleMinQty) cart[i].wholesale = true;
+        renderPos(root);
+      };
+    });
+    root.querySelectorAll("[data-qty]").forEach((el) => {
+      el.onchange = (e) => {
+        const i = Number(el.getAttribute("data-qty"));
+        const q = Math.max(1, Math.floor(Number(e.target.value || 1)));
+        cart[i].qty = q;
+        if (q >= cart[i].product.wholesaleMinQty) cart[i].wholesale = true;
         renderPos(root);
       };
     });
@@ -308,16 +512,23 @@
         renderPos(root);
       };
     });
+    const updateCartTotalsDom = () => {
+      const rate = getActiveCartUsdRate();
+      const clampedDisc = Math.min(subtotal, Math.max(0, Number(posDiscount || 0)));
+      const newTotal = Math.max(0, subtotal - clampedDisc);
+      const subEl = document.getElementById("posSubtotalDisplay");
+      if (subEl) subEl.innerHTML = renderAmountHtml(subtotal, isUsdCart, rate);
+      const discEl = document.getElementById("posDiscountDisplay");
+      if (discEl) discEl.innerHTML = renderAmountHtml(clampedDisc, isUsdCart, rate, clampedDisc > 0);
+      const totEl = document.getElementById("posTotalDisplay");
+      if (totEl) totEl.innerHTML = renderAmountHtml(newTotal, isUsdCart, rate);
+    };
+
     const posDiscountEl = document.getElementById("posDiscount");
     if (posDiscountEl) {
       posDiscountEl.oninput = (e) => {
         posDiscount = Math.max(0, Number(e.target.value || 0));
-        const newTotal = Math.max(0, subtotal - posDiscount);
-        const totalEl = document.getElementById("posTotalSsp");
-        if (totalEl) totalEl.textContent = formatMoney(newTotal);
-        const usdEl = document.getElementById("posTotalUsd");
-        const r = Number(posUsdRate || (state.settings && state.settings.usdRateSsp) || 1300);
-        if (usdEl && r > 0) usdEl.textContent = `$${(newTotal / r).toFixed(2)} USD`;
+        updateCartTotalsDom();
       };
     }
     const posPayEl = document.getElementById("posPay");
@@ -333,9 +544,9 @@
         const val = Number(e.target.value);
         if (Number.isFinite(val) && val > 0) {
           posUsdRate = val;
-          const newTotal = Math.max(0, subtotal - posDiscount);
-          const usdEl = document.getElementById("posTotalUsd");
-          if (usdEl) usdEl.textContent = `$${(newTotal / val).toFixed(2)} USD`;
+          renderPos(root);
+          const inputNow = document.getElementById("posUsdRate");
+          if (inputNow) inputNow.focus();
         }
       };
     }
@@ -343,7 +554,7 @@
     if (checkoutBtn) {
       checkoutBtn.onclick = async () => {
         try {
-          await apiAction("COMPLETE_SALE", {
+          const createdInv = await apiAction("COMPLETE_SALE", {
             sale: {
               items: cart.map((c) => ({ productId: c.product.id, qty: c.qty, wholesale: c.wholesale })),
               discount: Number(document.getElementById("posDiscount").value || 0),
@@ -355,12 +566,18 @@
           cart = [];
           posDiscount = 0;
           notifyElectronPosActivity();
-          window.print();
+          if (createdInv) openInvoiceModal(createdInv);
         } catch (err) {
           alert(err.message);
         }
       };
     }
+    root.querySelectorAll("[data-view-inv]").forEach((el) => {
+      el.onclick = () => {
+        const inv = (state.invoices || []).find((i) => i.id === el.getAttribute("data-view-inv"));
+        if (inv) openInvoiceModal(inv);
+      };
+    });
     root.querySelectorAll("[data-ret]").forEach((el) => {
       el.onclick = () => apiAction("RETURN_INVOICE", { invoiceId: el.getAttribute("data-ret") });
     });
@@ -368,10 +585,9 @@
   }
 
   function addProductToCart(prod) {
-    if (prod.currentStock <= 0) return;
     const found = cart.find((c) => c.product.id === prod.id);
     if (found) {
-      if (found.qty < prod.currentStock) found.qty++;
+      found.qty++;
       if (found.qty >= prod.wholesaleMinQty) found.wholesale = true;
     } else {
       cart.push({ product: prod, qty: 1, wholesale: 1 >= prod.wholesaleMinQty });
@@ -635,17 +851,27 @@
         <div class="card">
           <h3>${s.navReports}</h3>
           <table>
-            <thead><tr><th>Invoice</th><th>Type</th><th>Payment</th><th>Total</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Type</th><th>Payment</th><th>Total</th><th class="no-print"></th></tr></thead>
             <tbody>
               ${completed
                 .slice(0, 50)
-                .map((i) => `<tr><td class="mono">${i.invoiceNumber}</td><td>${i.saleType}</td><td>${i.paymentMethod}</td><td class="mono">${formatMoney(i.total)}</td></tr>`)
+                .map((i) => {
+                  const invUsd = isInvoiceUsd(i);
+                  const invRate = getInvoiceRate(i);
+                  return `<tr><td class="mono">${i.invoiceNumber}</td><td>${i.saleType}</td><td>${invUsd ? "USD" : i.paymentMethod}</td><td class="mono">${renderAmountHtml(i.total, invUsd, invRate)}</td><td class="no-print"><button class="btn" data-rep-inv="${i.id}">${s.viewInvoice}</button></td></tr>`;
+                })
                 .join("")}
             </tbody>
           </table>
         </div>
       </div>
     `;
+    root.querySelectorAll("[data-rep-inv]").forEach((btn) => {
+      btn.onclick = () => {
+        const inv = completed.find((x) => x.id === btn.getAttribute("data-rep-inv"));
+        if (inv) openInvoiceModal(inv);
+      };
+    });
     document.getElementById("printBtn").onclick = () => window.print();
     document.getElementById("csvBtn").onclick = () => {
       const rows = [["Invoice", "Type", "Payment", "Subtotal", "Discount", "Total", "Profit"]];
@@ -738,7 +964,7 @@
                  <input id="setEn" value="${st.storeNameEn}" />
                  <input id="setPri" type="color" value="${st.primaryColorHex}" style="max-width:64px;padding:2px" />
                  <input id="setSec" type="color" value="${st.secondaryColorHex}" style="max-width:64px;padding:2px" />
-                 <input id="setUsdRate" type="number" min="1" step="any" value="${st.usdRateSsp || 1300}" title="${s.usdRate}" style="max-width:130px" />
+                 <input id="setUsdRate" type="number" min="1" step="any" value="${st.usdRateSsp}" title="${s.usdRate}" style="max-width:130px" />
                  <button class="btn btn-primary" type="submit">${s.save}</button>
                </form>
                <form id="relForm" class="card row">
@@ -811,7 +1037,7 @@
     if (themeForm) {
       themeForm.onsubmit = (e) => {
         e.preventDefault();
-        const usdRateVal = Number(document.getElementById("setUsdRate").value || 1300);
+        const usdRateVal = Number(document.getElementById("setUsdRate").value);
         if (Number.isFinite(usdRateVal) && usdRateVal > 0) posUsdRate = usdRateVal;
         apiAction("SAVE_SETTINGS", {
           settings: {
@@ -819,7 +1045,7 @@
             storeNameEn: document.getElementById("setEn").value,
             primaryColorHex: document.getElementById("setPri").value,
             secondaryColorHex: document.getElementById("setSec").value,
-            usdRateSsp: Number.isFinite(usdRateVal) && usdRateVal > 0 ? usdRateVal : 1300
+            ...(Number.isFinite(usdRateVal) && usdRateVal > 0 ? { usdRateSsp: usdRateVal } : {})
           }
         });
       };
