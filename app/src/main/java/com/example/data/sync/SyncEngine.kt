@@ -356,7 +356,62 @@ class SyncEngine(
 
     private suspend fun executeSyncOp(storeId: String, op: PendingSyncOpEntity, memberUids: List<String>): Result<Unit> {
         val json = JSONObject(op.payloadJson)
+        if (op.operation == "DELETE") {
+            return when (op.collectionName) {
+                "products" -> remote.deleteProduct(storeId, op.documentId)
+                "members" -> remote.deleteMember(storeId, op.documentId, memberUids)
+                else -> Result.success(Unit)
+            }
+        }
         return when (op.collectionName) {
+            "holidays" -> {
+                remote.upsertHoliday(
+                    storeId,
+                    com.example.data.remote.FsHoliday(
+                        id = op.documentId,
+                        dateStr = json.optString("dateStr").takeIf { it.isNotBlank() },
+                        titleAr = json.optString("titleAr"),
+                        titleEn = json.optString("titleEn"),
+                        isWeeklyOffDay = json.optBoolean("isWeeklyOffDay", false),
+                        dayOfWeek = json.optInt("dayOfWeek", 0)
+                    ),
+                    memberUids
+                ).map { }
+            }
+            "members" -> {
+                remote.upsertMember(
+                    storeId,
+                    com.example.data.remote.FsStoreMember(
+                        uid = op.documentId,
+                        displayName = json.optString("displayName"),
+                        role = json.optString("role"),
+                        active = json.optBoolean("active", true)
+                    ),
+                    memberUids
+                )
+            }
+            "settings" -> {
+                remote.upsertSettings(
+                    storeId,
+                    com.example.data.remote.FsStoreSettings(
+                        id = "main",
+                        storeNameAr = json.optString("storeNameAr"),
+                        storeNameEn = json.optString("storeNameEn"),
+                        primaryColorHex = json.optString("primaryColorHex"),
+                        secondaryColorHex = json.optString("secondaryColorHex"),
+                        logoUri = json.optString("logoUri").takeIf { it.isNotBlank() },
+                        sessionTimeoutMinutes = json.optInt("sessionTimeoutMinutes", 30),
+                        notifyLowStock = json.optBoolean("notifyLowStock", true),
+                        notifyDayNotClosed = json.optBoolean("notifyDayNotClosed", true),
+                        notifyNewUser = json.optBoolean("notifyNewUser", true),
+                        notifySyncErrors = json.optBoolean("notifySyncErrors", true),
+                        notifyNewVersion = json.optBoolean("notifyNewVersion", true),
+                        notifyRoles = json.optString("notifyRoles").split(",").filter { it.isNotBlank() },
+                        usdRateSsp = json.optDouble("usdRateSsp", 1300.0)
+                    ),
+                    memberUids
+                )
+            }
             "products" -> {
                 remote.upsertProduct(
                     storeId,

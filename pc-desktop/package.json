@@ -6,9 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "electron": "electron .",
-    "build:win": "electron-builder --win nsis",
+    "build:win": "electron-builder --win nsis --publish never",
     "prepare:download-folder": "node scripts/build-download-folder.js",
-    "test": "node --test test/pc-store.test.js"
+    "test": "node --test test/pc-store.test.js test/cloud-sync.test.js"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
@@ -53,6 +53,14 @@
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico",
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "tonyomini18-collab",
+        "repo": "Omini",
+        "releaseType": "release"
+      }
+    ]
   }
 }

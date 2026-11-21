@@ -26,6 +26,8 @@ import com.example.data.sync.ConnectivityObserver
 import com.example.data.sync.LanSyncClient
 import com.example.data.sync.PreferencesManager
 import com.example.data.sync.SyncEngine
+import com.example.data.update.GithubUpdater
+import com.example.data.update.UpdateConfig
 import com.example.i18n.AppLanguage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,10 +71,47 @@ class StoreViewModel(
 
     private var lastActivityMillis: Long = System.currentTimeMillis()
 
+    // Newest release found on GitHub (null until the first successful check).
+    private val githubRelease = MutableStateFlow<AppReleaseEntity?>(null)
+
     init {
         observeLocalAndConnectivity()
         bootstrapStoreSession()
         startSessionTimeoutWatcher()
+        startGithubUpdateChecker()
+        startBackgroundSync()
+    }
+
+    // Every 2 minutes: retry anything still waiting for the cloud, and pull/push with the PC over Wi-Fi.
+    private fun startBackgroundSync() {
+        viewModelScope.launch {
+            while (true) {
+                delay(120_000L)
+                val s = _uiState.value
+                if (s.isOnline && s.storeId.isNotBlank() && s.pendingSyncCount > 0 && remote.isCloudAuthenticated()) {
+                    syncEngine.flushPendingOps(s.storeId)
+                }
+                if (s.pcServerUrl.isNotBlank() && !s.isPcSyncing) {
+                    syncWithPcInternal(s.pcServerUrl, silent = true)
+                }
+            }
+        }
+    }
+
+    private fun startGithubUpdateChecker() {
+        viewModelScope.launch {
+            while (true) {
+                if (connectivity.isOnline.value) {
+                    val found = GithubUpdater.fetchLatest()
+                    if (found != null && found.versionCode > BuildConfig.VERSION_CODE) {
+                        githubRelease.value = found
+                    }
+                    delay(UpdateConfig.CHECK_INTERVAL_MS)
+                } else {
+                    delay(UpdateConfig.OFFLINE_RETRY_MS)
+                }
+            }
+        }
     }
 
     private fun bootstrapStoreSession() {
@@ -252,13 +291,13 @@ class StoreViewModel(
         viewModelScope.launch {
             combine(
                 dao.observeSettings(),
-                dao.observeReleases()
-            ) { settings, releases -> settings to releases }
-                .collect { (settings, releases) ->
+                dao.observeReleases(),
+                githubRelease
+            ) { settings, releases, github -> Triple(settings, releases, github) }
+                .collect { (settings, releases, github) ->
                     _uiState.update { state ->
                         val effectiveSettings = settings ?: StoreSettingsEntity()
-                        val latestAndroid = releases
-                            .filter { it.platform == "android" }
+                        val latestAndroid = (releases.filter { it.platform == "android" } + listOfNotNull(github))
                             .maxByOrNull { it.versionCode }
                         val updateCandidate = if (
                             latestAndroid != null &&
@@ -406,7 +445,7 @@ class StoreViewModel(
         }
     }
 
-    private suspend fun syncWithPcInternal(rawUrl: String) {
+    private suspend fun syncWithPcInternal(rawUrl: String, silent: Boolean = false) {
         val normalized = LanSyncClient.normalizeServerUrl(rawUrl)
         if (normalized.isBlank()) return
         prefs.setPcServerUrl(normalized)
@@ -419,6 +458,10 @@ class StoreViewModel(
         res.onSuccess { summary ->
             val now = System.currentTimeMillis()
             prefs.setLastPcSyncMillis(now)
+            if (silent) {
+                _uiState.update { it.copy(isPcSyncing = false) }
+                return@onSuccess
+            }
             val msg = if (_uiState.value.language == AppLanguage.AR) {
                 "تمت المزامنة مع الكمبيوتر • منتجات: ${summary.productsSynced}، فواتير: ${summary.invoicesSynced}"
             } else {
@@ -433,6 +476,10 @@ class StoreViewModel(
                 )
             }
         }.onFailure { err ->
+            if (silent) {
+                _uiState.update { it.copy(isPcSyncing = false) }
+                return@onFailure
+            }
             val msg = err.localizedMessage ?: "PC sync failed"
             _uiState.update {
                 it.copy(
@@ -937,9 +984,8 @@ class StoreViewModel(
         viewModelScope.launch {
             val softDeleted = product.copy(isDeleted = true, updatedAtMillis = System.currentTimeMillis())
             dao.upsertProduct(softDeleted)
-            if (state.isOnline && remote.isCloudAuthenticated()) {
-                remote.deleteProduct(state.storeId, product.id)
-            }
+            syncEngine.enqueueOperation("products", product.id, "DELETE", JSONObject())
+            if (state.isOnline) syncEngine.flushPendingOps(state.storeId)
             recordAuditLog("DELETE_PRODUCT", "product", product.id, product.nameEn)
         }
     }
@@ -1142,21 +1188,19 @@ class StoreViewModel(
                 dayOfWeek = if (isWeekly) dayOfWeek else 0
             )
             dao.upsertHoliday(entity)
-            if (state.isOnline && remote.isCloudAuthenticated()) {
-                val members = remote.getMemberUids(state.storeId)
-                remote.upsertHoliday(
-                    state.storeId,
-                    FsHoliday(
-                        id = id,
-                        dateStr = entity.dateStr.takeIf { it.isNotBlank() },
-                        titleAr = entity.titleAr,
-                        titleEn = entity.titleEn,
-                        isWeeklyOffDay = entity.isWeeklyOffDay,
-                        dayOfWeek = entity.dayOfWeek
-                    ),
-                    members
-                )
-            }
+            syncEngine.enqueueOperation(
+                "holidays",
+                id,
+                "UPSERT",
+                JSONObject().apply {
+                    put("dateStr", entity.dateStr)
+                    put("titleAr", entity.titleAr)
+                    put("titleEn", entity.titleEn)
+                    put("isWeeklyOffDay", entity.isWeeklyOffDay)
+                    put("dayOfWeek", entity.dayOfWeek)
+                }
+            )
+            if (state.isOnline) syncEngine.flushPendingOps(state.storeId)
         }
     }
 
@@ -1279,14 +1323,17 @@ class StoreViewModel(
             updatedAtMillis = now
         )
         dao.upsertMember(entity)
-        if (state.isOnline && remote.isCloudAuthenticated()) {
-            val members = remote.getMemberUids(state.storeId)
-            remote.upsertMember(
-                state.storeId,
-                FsStoreMember(uid = resolvedUid, displayName = entity.displayName, role = role.key, active = active),
-                members
-            )
-        }
+        syncEngine.enqueueOperation(
+            "members",
+            resolvedUid,
+            "UPSERT",
+            JSONObject().apply {
+                put("displayName", entity.displayName)
+                put("role", role.key)
+                put("active", active)
+            }
+        )
+        if (state.isOnline) syncEngine.flushPendingOps(state.storeId)
         recordAuditLog("UPSERT_MEMBER", "member", resolvedUid, "${entity.username} (${entity.displayName}) -> ${role.key}")
         _uiState.update {
             it.copy(statusMessage = if (it.language == AppLanguage.AR) "تم حفظ المستخدم وكلمة المرور بنجاح" else "User and password saved successfully")
@@ -1341,10 +1388,8 @@ class StoreViewModel(
         }
 
         dao.deleteMemberByUid(target.uid)
-        if (state.isOnline && remote.isCloudAuthenticated()) {
-            val members = remote.getMemberUids(state.storeId)
-            remote.deleteMember(state.storeId, target.uid, members)
-        }
+        syncEngine.enqueueOperation("members", target.uid, "DELETE", JSONObject())
+        if (state.isOnline) syncEngine.flushPendingOps(state.storeId)
         recordAuditLog("DELETE_MEMBER", "member", target.uid, "${target.username} (${target.role})")
         _uiState.update {
             it.copy(statusMessage = if (it.language == AppLanguage.AR) "تم حذف المستخدم بنجاح" else "User deleted successfully")
@@ -1364,29 +1409,27 @@ class StoreViewModel(
                 prefs.setUsdRateSsp(rateToSave)
                 _uiState.update { it.copy(usdRateSsp = rateToSave) }
             }
-            if (state.isOnline && remote.isCloudAuthenticated()) {
-                val members = remote.getMemberUids(state.storeId)
-                remote.upsertSettings(
-                    state.storeId,
-                    FsStoreSettings(
-                        id = "main",
-                        storeNameAr = entityToSave.storeNameAr,
-                        storeNameEn = entityToSave.storeNameEn,
-                        primaryColorHex = entityToSave.primaryColorHex,
-                        secondaryColorHex = entityToSave.secondaryColorHex,
-                        logoUri = entityToSave.logoUri.takeIf { it.isNotBlank() },
-                        sessionTimeoutMinutes = entityToSave.sessionTimeoutMinutes,
-                        notifyLowStock = entityToSave.notifyLowStock,
-                        notifyDayNotClosed = entityToSave.notifyDayNotClosed,
-                        notifyNewUser = entityToSave.notifyNewUser,
-                        notifySyncErrors = entityToSave.notifySyncErrors,
-                        notifyNewVersion = entityToSave.notifyNewVersion,
-                        notifyRoles = entityToSave.notifyRolesCsv.split(",").filter { it.isNotBlank() },
-                        usdRateSsp = rateToSave
-                    ),
-                    members
-                )
-            }
+            syncEngine.enqueueOperation(
+                "settings",
+                "main",
+                "UPSERT",
+                JSONObject().apply {
+                    put("storeNameAr", entityToSave.storeNameAr)
+                    put("storeNameEn", entityToSave.storeNameEn)
+                    put("primaryColorHex", entityToSave.primaryColorHex)
+                    put("secondaryColorHex", entityToSave.secondaryColorHex)
+                    put("logoUri", entityToSave.logoUri)
+                    put("sessionTimeoutMinutes", entityToSave.sessionTimeoutMinutes)
+                    put("notifyLowStock", entityToSave.notifyLowStock)
+                    put("notifyDayNotClosed", entityToSave.notifyDayNotClosed)
+                    put("notifyNewUser", entityToSave.notifyNewUser)
+                    put("notifySyncErrors", entityToSave.notifySyncErrors)
+                    put("notifyNewVersion", entityToSave.notifyNewVersion)
+                    put("notifyRoles", entityToSave.notifyRolesCsv)
+                    put("usdRateSsp", rateToSave)
+                }
+            )
+            if (state.isOnline) syncEngine.flushPendingOps(state.storeId)
             recordAuditLog("UPDATE_SETTINGS", "settings", "main", "${entityToSave.storeNameEn} (${entityToSave.primaryColorHex})")
         }
     }

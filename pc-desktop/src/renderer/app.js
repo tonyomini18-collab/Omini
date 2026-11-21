@@ -1140,6 +1140,23 @@
 
   window.addEventListener("online", updateConnectivityBadge);
   window.addEventListener("offline", updateConnectivityBadge);
+  if (window.aromaElectron && window.aromaElectron.onDataChanged) {
+    // Data arrived from the cloud (phones). Refresh the screen, but never while someone is typing.
+    let refreshTimer = null;
+    const tryRefresh = () => {
+      refreshTimer = null;
+      if (!currentUser) return;
+      const el = document.activeElement;
+      if (el && ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)) {
+        refreshTimer = setTimeout(tryRefresh, 5000);
+        return;
+      }
+      refreshState().catch(() => {});
+    };
+    window.aromaElectron.onDataChanged(() => {
+      if (!refreshTimer) refreshTimer = setTimeout(tryRefresh, 800);
+    });
+  }
   if (window.aromaElectron) {
     window.aromaElectron.onUpdateReady((info) => {
       if (info.canRestartNow && confirm(`PC Update v${info.version} ready. Restart & install?`)) {

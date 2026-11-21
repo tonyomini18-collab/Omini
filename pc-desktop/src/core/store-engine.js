@@ -877,6 +877,7 @@ class PcStoreEngine {
       updatedAtMillis: ts
     };
     this.state.holidays.push(h);
+    this.enqueueCloudOp("holidays", h.id, h);
     this.persist();
     return h;
   }

@@ -50,6 +50,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -83,6 +84,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import coil.compose.AsyncImage
+import com.example.data.update.GithubUpdater
+import com.example.data.update.InstallResult
 import com.example.i18n.AppLanguage
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.DangerCrimson
@@ -523,6 +526,9 @@ fun MainScaffold(
     }
 
     // Non-interruptive App Update Dialog (never shown while POS cart has active items)
+    var updateBusy by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf(0) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
     val update = state.availableUpdate
     if (update != null && state.cartItems.isEmpty() && !state.sessionLocked) {
         AlertDialog(
@@ -545,6 +551,20 @@ fun MainScaffold(
                         if (isRtl) update.releaseNotesAr else update.releaseNotesEn,
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    if (updateBusy) {
+                        LinearProgressIndicator(
+                            progress = { updateProgress / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    val updateInfo = updateMessage
+                    if (updateInfo != null) {
+                        Text(
+                            updateInfo,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     if (update.isMandatory) {
                         Text(
                             strings.mandatoryUpdateNote,
@@ -558,14 +578,50 @@ fun MainScaffold(
             confirmButton = {
                 Button(
                     onClick = {
-                        runCatching {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl))
-                            context.startActivity(intent)
+                        val isApk = update.downloadUrl.substringBefore('?').endsWith(".apk", ignoreCase = true)
+                        if (!isApk) {
+                            runCatching {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl))
+                                context.startActivity(intent)
+                            }
+                        } else if (!updateBusy) {
+                            updateBusy = true
+                            updateProgress = 0
+                            updateMessage = null
+                            scope.launch {
+                                try {
+                                    val apk = GithubUpdater.downloadApk(context, update.downloadUrl) { pct ->
+                                        updateProgress = pct
+                                    }
+                                    when (GithubUpdater.installApk(context, apk)) {
+                                        InstallResult.NEEDS_PERMISSION -> updateMessage = if (isRtl) {
+                                            "اسمح بتثبيت التطبيقات من هذا التطبيق ثم اضغط مرة أخرى."
+                                        } else {
+                                            "Allow installs from this app, then tap again."
+                                        }
+                                        InstallResult.FAILED -> runCatching {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl)))
+                                        }
+                                        InstallResult.STARTED -> Unit
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    updateMessage = if (isRtl) "تعذر التحميل. حاول مرة أخرى." else "Download failed. Try again."
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl)))
+                                    }
+                                } finally {
+                                    updateBusy = false
+                                }
+                                Unit
+                            }
                         }
                     },
+                    enabled = !updateBusy,
                     modifier = Modifier.testTag("update_download_button")
                 ) {
-                    Text(strings.downloadAndInstall)
+                    Text(if (updateBusy) "$updateProgress%" else strings.downloadAndInstall)
                 }
             },
             dismissButton = {

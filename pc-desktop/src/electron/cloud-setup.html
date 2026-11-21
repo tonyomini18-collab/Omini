@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cloud Sync</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; padding: 20px; background: #f6f7f9; color: #1d2530; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.hint { font-size: 12.5px; color: #55606e; margin: 0 0 14px; line-height: 1.5; }
+  label { display: block; font-size: 12.5px; margin: 10px 0 4px; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #c4cbd5; border-radius: 6px; font-size: 14px; }
+  .row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: #2f6fed; color: #fff; font-size: 13px; cursor: pointer; }
+  button.secondary { background: #e3e7ee; color: #1d2530; }
+  .box { margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #dde2ea; font-size: 13px; line-height: 1.6; }
+  .ok { color: #1a7f3c; font-weight: 600; } .bad { color: #b3261e; font-weight: 600; }
+  .err { color: #b3261e; word-break: break-word; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Cloud Sync / المزامنة السحابية</h1>
+  <p class="hint">
+    Sign in with the store owner's email and password (the same email used with Google on the phone).
+    Then everything done on the PC goes to the phones, and what is done on the phones comes to the PC, whenever there is internet.
+    <br>Never typed a password for that email? Press "Send password email" once and choose a password.
+  </p>
+  <label for="email">Email / البريد</label>
+  <input id="email" type="email" autocomplete="off">
+  <label for="password">Password / كلمة المرور</label>
+  <input id="password" type="password" autocomplete="off">
+  <label for="apiKey">Firebase Web API key (optional)</label>
+  <input id="apiKey" type="text" placeholder="leave empty unless support gave you one" autocomplete="off">
+  <div class="row">
+    <button id="save">Save &amp; connect</button>
+    <button id="sync" class="secondary">Sync now</button>
+    <button id="reset" class="secondary">Send password email</button>
+    <button id="clear" class="secondary">Disconnect</button>
+  </div>
+  <div class="box" id="status">Loading…</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fmt = (ms) => (ms ? new Date(ms).toLocaleString() : "never");
+  async function refresh() {
+    const s = await window.cloudSetup.status();
+    if (s.email && !$("email").value) $("email").value = s.email;
+    $("status").innerHTML =
+      (!s.configured ? "<span class='bad'>Not set up</span>" :
+        s.connected ? "<span class='ok'>Connected</span>" : "<span class='bad'>Offline / not connected</span> (it keeps retrying)") +
+      "<br>Waiting to upload: <b>" + s.pending + "</b>" +
+      "<br>Last upload: " + fmt(s.lastPushAt) +
+      "<br>Last download from phones: " + fmt(s.lastPullAt) +
+      (s.lastError ? "<br><span class='err'>" + String(s.lastError).replace(/</g, "&lt;") + "</span>" : "");
+  }
+  $("save").onclick = async () => {
+    $("status").textContent = "Connecting…";
+    await window.cloudSetup.save({ email: $("email").value.trim(), password: $("password").value, apiKey: $("apiKey").value.trim() });
+    $("password").value = "";
+    setTimeout(refresh, 1500);
+  };
+  $("sync").onclick = async () => { $("status").textContent = "Syncing…"; await window.cloudSetup.syncNow(); refresh(); };
+  $("reset").onclick = async () => {
+    const r = await window.cloudSetup.resetPassword($("email").value.trim());
+    $("status").textContent = r.ok ? "Email sent. Open it, choose a password, then type it here." : "Failed: " + r.error;
+  };
+  $("clear").onclick = async () => { await window.cloudSetup.clear(); $("email").value = ""; refresh(); };
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>
